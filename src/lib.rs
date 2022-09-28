@@ -1,4 +1,6 @@
 /// Represents all train data
-pub mod train;
+pub mod control;
+/// General interfaces and controlling structs
+pub mod general;
 /// Testing
 mod test;

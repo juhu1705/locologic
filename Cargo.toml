@@ -6,14 +6,14 @@ authors = ["Fabius Mettner <fabius1705@live.de>"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/juhu1705/locologic"
-documentation = "https://juhu1705.github.io/locodrive/doc/locologic"
+documentation = "https://juhu1705.github.io/locologic/doc/locologic"
 description = """
 A model railroad controlling system to handle autodriving.
 """
-categories = ["model train"]
 
 [dependencies]
 tokio-serial = "5.4.1"
-locodrive = { git = "https://github.com/juhu1705/locodrive" }
+locodrive = { version = "0.1.2", features = ["all"] }
 bytes = "1.2.1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "macros", "sync"] }
+petgraph = { version = "0.6.2", features = ["serde-1"] }

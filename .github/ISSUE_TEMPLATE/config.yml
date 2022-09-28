@@ -7,7 +7,7 @@ contact_links:
     url: https://juhu1705.github.io/locologic/doc/locologic
     about: The rust doc of this project
   - name: LocoDrive
-    url: https://github.com/users/juhu1705/locodrive/
+    url: https://github.com/juhu1705/locodrive/
     about: The connection to the model train railroad and message parsing
   - name: Model Train contribution project board
     url: https://github.com/users/juhu1705/projects/5
