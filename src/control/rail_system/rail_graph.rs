@@ -1,39 +1,47 @@
+use std::borrow::Borrow;
 use crate::control::rail_system::components::{Direction, Position, Rail, Sensor, Signal, Switch};
+use crate::control::train::Train;
+use locodrive::args::AddressArg;
 use petgraph::algo::astar;
 use petgraph::graph::{Graph, NodeIndex};
+use petgraph::visit::Walker;
+use std::collections::HashMap;
 use std::ops::Index;
 
-pub enum Node<'t> {
+pub enum Node {
     Signal(Signal),
-    Sensor(Sensor<'t>),
+    Sensor(Sensor),
     Switch(Switch),
-    Station(Sensor<'t>),
+    Station(Sensor),
 }
 
-pub struct LocoGraph<'t> {
-    graph: Graph<Node<'t>, Vec<Rail>>,
+pub struct LocoGraph {
+    graph: Graph<Node, Vec<Rail>>,
+    trains: HashMap<AddressArg, Train>,
 }
 
-impl<'t> LocoGraph<'t> {
+impl LocoGraph {
     pub fn new() -> Self {
-        let mut graph = Graph::<Node<'t>, Vec<Rail>>::new();
+        let mut graph = Graph::<Node, Vec<Rail>>::new();
 
         let sig = Signal::Path {
-            pos: Position::new(
-                10,
-                10,
-                10,
-                Direction::East,
-            ),
+            pos: Position::new(10, 10, 10, Direction::East),
+            report: vec![]
         };
 
         // TEST CODE - START
-        let test_node = graph.add_node(Node::Signal(sig));
+        let _test_node = graph.add_node(Node::Signal(sig));
 
-        graph.add_edge(test_node, test_node, vec![]);
         // TEST CODE - END
 
-        LocoGraph { graph }
+        LocoGraph {
+            graph,
+            trains: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn graph(&mut self) -> &mut Graph<Node, Vec<Rail>> {
+        &mut self.graph
     }
 
     pub fn shortest_path(
@@ -48,12 +56,14 @@ impl<'t> LocoGraph<'t> {
             |cost| cost.weight().iter().map(|rail| rail.length()).sum(),
             |node: NodeIndex| match self.graph.index(node) {
                 Node::Sensor(sensor) => {
-                    if let Some(trains) = &sensor.trains {
-                        if trains.iter().any(|t| t.stands()) {
-                            100
+                    if sensor.trains().iter().any(|t| {
+                        if let Some(t) = self.trains.get(t) {
+                            t.stands()
                         } else {
-                            1
+                            false
                         }
+                    }) {
+                        100
                     } else {
                         1
                     }

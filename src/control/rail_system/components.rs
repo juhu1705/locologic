@@ -1,4 +1,10 @@
+use crate::control::rail_system::rail_graph::{LocoGraph, Node};
 use crate::control::train::Train;
+use locodrive::args::{AddressArg, SensorLevel, SwitchDirection};
+use petgraph::graph::NodeIndex;
+use petgraph::visit::{Dfs, Walker};
+use petgraph::Graph;
+use std::ops::Index;
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -30,7 +36,6 @@ impl From<u8> for Direction {
 }
 
 impl Direction {
-
     pub fn rotate_right(self) -> Direction {
         self.rotate_by(1)
     }
@@ -43,7 +48,6 @@ impl Direction {
     pub fn rotate_by(self, rotation: u8) -> Direction {
         Direction::from((self as u8) + rotation)
     }
-
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -73,15 +77,15 @@ impl Position {
     }
 
     pub fn x(&self) -> usize {
-        self.x
+        *self.x
     }
 
     pub fn y(&self) -> usize {
-        self.y
+        *self.y
     }
 
     pub fn z(&self) -> usize {
-        self.z
+        *self.z
     }
 
     pub fn dir(&self) -> Direction {
@@ -89,6 +93,7 @@ impl Position {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Rail {
     length: usize,
     pos: Position,
@@ -98,7 +103,7 @@ pub struct Rail {
 
 impl Rail {
     pub fn length(&self) -> usize {
-        self.length
+        *self.length
     }
 
     pub fn pos(&self) -> Position {
@@ -108,18 +113,127 @@ impl Rail {
     pub fn start_dir(&self) -> Direction {
         self.start_dir
     }
+
+    pub fn end_dir(&self) -> Direction {
+        self.end_dir
+    }
 }
 
-pub struct Sensor<'t> {
-    pub(crate) trains: Option<Vec<&'t Train>>,
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct Sensor {
+    address: AddressArg,
+    status: SensorLevel,
+    trains: Vec<AddressArg>,
+    actual: Option<AddressArg>,
     pos: Position,
+    report: Vec<Signal>,
+}
+
+impl Sensor {
+    pub fn new(adr: AddressArg, pos: Position) -> Sensor {
+        Sensor {
+            address: adr,
+            status: SensorLevel::Low,
+            trains: vec![],
+            actual: None,
+            pos,
+            report: vec![],
+        }
+    }
+
+    pub(crate) fn subscribe(&mut self, train: &Train) {
+        self.trains.push(train.address());
+    }
+
+    pub(crate) fn trains(&self) -> &Vec<AddressArg> {
+        &self.trains
+    }
+
+    pub fn can_drive_on_sensor(&mut self, train: &Train) -> bool {
+        if let Some(t) = self.actual {
+            if t == train.address() {
+                true
+            } else {
+                false
+            }
+        } else {
+            if self.trains.starts_with(&[train.address()]) {
+                self.actual = Some(self.trains.pop().unwrap());
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    pub fn free(&self) -> bool {
+        self.status == SensorLevel::Low && self.actual == None
+    }
 }
 
 pub enum Signal {
-    Block { pos: Position },
-    Path { pos: Position },
+    Block { pos: Position, report: Vec<Signal> },
+    Path { pos: Position, report: Vec<Signal> },
 }
 
-pub struct Switch {}
+impl Signal {
+    pub fn free(
+        &self,
+        signal_index: NodeIndex,
+        path: &Vec<NodeIndex>,
+        graph: &mut LocoGraph,
+    ) -> bool {
+        match self {
+            Signal::Block { pos: _, report: _ } => self.block_free(signal_index, graph),
+            Signal::Path { pos: _, report: _ } => self.path_free(path, graph),
+        }
+    }
 
-pub struct DecorationComponents {}
+    pub fn block_free(&self, index: NodeIndex, graph: &mut LocoGraph) -> bool {
+        let rail = graph.graph();
+
+        rail.neighbors(index).all(|x| self.neighbours_free(x, rail))
+    }
+
+    fn neighbours_free(&self, index: NodeIndex, rail: &mut Graph<Node, Vec<Rail>>) -> bool {
+        match rail.index(&index) {
+            Node::Sensor(sensor) | Node::Station(sensor) => {
+                sensor.free() && rail.neighbors(index).all(|x| self.neighbours_free(x, rail))
+            }
+            Node::Signal(_) => true,
+            _ => rail.neighbors(index).all(|index| self.neighbours_free(index, rail)),
+        }
+    }
+
+    pub fn path_free(&self, path: &Vec<NodeIndex>, graph: &mut LocoGraph) -> bool {
+        let mut is_in_range = false;
+
+        path.iter()
+            .filter_map(|x| {
+                if let Node::Signal(sig) = graph.graph().index(**x) {
+                    if is_in_range {
+                        is_in_range = false;
+                        return Some(sig.free(**x, path, graph));
+                    } else if *sig == self {
+                        is_in_range = true;
+                    }
+                } else if let Node::Sensor(sensor) = graph.graph().index(**x) {
+                    if is_in_range {
+                        return Some(sensor.free());
+                    }
+                }
+                None
+            })
+            .all(|sensor| sensor)
+    }
+}
+
+pub struct Switch {
+    pos: Position,
+    dir: SwitchDirection,
+    updated: bool,
+}
+
+pub struct DecorationComponents {
+    pos: Position,
+}

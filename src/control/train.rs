@@ -1,19 +1,20 @@
 use crate::general::UpdateAble;
 use locodrive::args::{AddressArg, SlotArg, SpeedArg};
+use std::collections::HashMap;
 use std::time::Duration;
 
 pub struct Clock {
     time: Duration,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 /// Represents one train
 pub struct Train {
-    /// The trains address
+    /// The TRAINS address
     address: AddressArg,
-    /// The trains slot
+    /// The TRAINS slot
     slot: SlotArg,
-    /// The trains current speed
+    /// The TRAINS current speed
     actual_speed: SpeedArg,
     /// The speed the train should read
     speed: SpeedArg,
@@ -35,15 +36,18 @@ impl Train {
     pub fn stands(&self) -> bool {
         self.speed == SpeedArg::Stop || self.speed == SpeedArg::EmergencyStop
     }
-}
 
-impl UpdateAble for Train {
-    fn update(tick: Duration) {
-        todo!()
+    pub fn address(&self) -> AddressArg {
+        self.address
     }
 }
 
-#[derive(Clone)]
+impl UpdateAble for Train {
+    fn update(_tick: Duration) {
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 /// One station for a train to drive to
 pub struct Station {
     arrive: Box<WaitingNode>,
@@ -64,7 +68,7 @@ trait Fulfiller {
     fn fulfills(&self) -> bool;
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 struct WaitingNode {
     connector: WaitingReasonOperator,
     waiters: Vec<WaitingReasons>,
@@ -102,7 +106,7 @@ impl WaitingNode {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum WaitingReasonOperator {
     AND,
     OR,
@@ -111,7 +115,7 @@ pub enum WaitingReasonOperator {
 }
 
 /// For what the train should wait
-#[derive(Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum WaitingReasons {
     /// Waits a specific time
     Time(Duration),
