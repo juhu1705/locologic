@@ -7,7 +7,7 @@ pub struct Clock {
     time: Duration,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// Represents one train
 pub struct Train {
     /// The TRAINS address
@@ -47,7 +47,7 @@ impl UpdateAble for Train {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// One station for a train to drive to
 pub struct Station {
     arrive: Box<WaitingNode>,
@@ -68,7 +68,7 @@ trait Fulfiller {
     fn fulfills(&self) -> bool;
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct WaitingNode {
     connector: WaitingReasonOperator,
     waiters: Vec<WaitingReasons>,
@@ -115,7 +115,7 @@ pub enum WaitingReasonOperator {
 }
 
 /// For what the train should wait
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum WaitingReasons {
     /// Waits a specific time
     Time(Duration),
