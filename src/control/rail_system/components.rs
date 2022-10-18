@@ -1,10 +1,12 @@
 use crate::control::rail_system::rail_graph::{LocoGraph, Node};
 use crate::control::train::Train;
-use locodrive::args::{AddressArg, SensorLevel, SwitchDirection};
+use locodrive::args::{AddressArg, SwitchDirection};
 use petgraph::graph::NodeIndex;
-use petgraph::visit::{Dfs, Walker};
 use petgraph::Graph;
 use std::ops::Index;
+use tokio::sync::watch;
+use tokio::sync::watch::Sender;
+use tokio::sync::watch::Receiver;
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -77,15 +79,15 @@ impl Position {
     }
 
     pub fn x(&self) -> usize {
-        *self.x
+        self.x
     }
 
     pub fn y(&self) -> usize {
-        *self.y
+        self.y
     }
 
     pub fn z(&self) -> usize {
-        *self.z
+        self.z
     }
 
     pub fn dir(&self) -> Direction {
@@ -103,7 +105,7 @@ pub struct Rail {
 
 impl Rail {
     pub fn length(&self) -> usize {
-        *self.length
+        self.length
     }
 
     pub fn pos(&self) -> Position {
@@ -119,25 +121,32 @@ impl Rail {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct Sensor {
+pub enum Status {
+    Free,
+    Reserved,
+    PathFree,
+    Occupied,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct Sensor<'t> {
     address: AddressArg,
-    status: SensorLevel,
+    status: Status,
     trains: Vec<AddressArg>,
     actual: Option<AddressArg>,
     pos: Position,
-    report: Vec<Signal>,
+    signals: Vec<&'t Signal<'t>>,
 }
 
-impl Sensor {
-    pub fn new(adr: AddressArg, pos: Position) -> Sensor {
+impl<'t> Sensor<'t> {
+    pub fn new(adr: AddressArg, pos: Position) -> Sensor<'t> {
         Sensor {
             address: adr,
-            status: SensorLevel::Low,
+            status: Status::Free,
             trains: vec![],
             actual: None,
             pos,
-            report: vec![],
+            signals: vec![]
         }
     }
 
@@ -166,65 +175,87 @@ impl Sensor {
         }
     }
 
-    pub fn free(&self) -> bool {
-        self.status == SensorLevel::Low && self.actual == None
+    pub fn status(&self) -> Status {
+        *self.status
     }
 }
 
-pub enum Signal {
-    Block { pos: Position, report: Vec<Signal> },
-    Path { pos: Position, report: Vec<Signal> },
+#[derive(Clone)]
+pub enum SignalType<'t> {
+    Block,
+    Path(Vec<&'t Signal<'t>>)
 }
 
-impl Signal {
-    pub fn free(
-        &self,
-        signal_index: NodeIndex,
-        path: &Vec<NodeIndex>,
-        graph: &mut LocoGraph,
-    ) -> bool {
-        match self {
-            Signal::Block { pos: _, report: _ } => self.block_free(signal_index, graph),
-            Signal::Path { pos: _, report: _ } => self.path_free(path, graph),
+pub struct Signal<'t> {
+    sig_type: SignalType<'t>,
+    pos: Position,
+    status: Status,
+    send_to: Sender<bool>,
+    watch: Receiver<bool>,
+}
+
+impl<'t> Signal<'t> {
+
+    pub fn new(sig_type: SignalType, pos: Position) -> Self {
+        let (send_to, mut watch) = watch::channel(false);
+
+        Signal {
+            sig_type,
+            pos,
+            status: Status::Free,
+            send_to,
+            watch
         }
     }
 
-    pub fn block_free(&self, index: NodeIndex, graph: &mut LocoGraph) -> bool {
+    pub fn free(
+        &self,
+    ) -> Status {
+        *self.status
+    }
+
+    pub fn sensor_update(&self, trigger: &'t Sensor<'t>) {
+
+    }
+
+    pub fn signal_update(&self, trigger: &'t Signal<'t>) {
+
+    }
+
+    pub fn block_free(&self, index: NodeIndex, graph: &LocoGraph) -> bool {
         let rail = graph.graph();
 
         rail.neighbors(index).all(|x| self.neighbours_free(x, rail))
     }
 
-    fn neighbours_free(&self, index: NodeIndex, rail: &mut Graph<Node, Vec<Rail>>) -> bool {
-        match rail.index(&index) {
+    fn neighbours_free(&self, index: NodeIndex, rail: &Graph<Node, Vec<Rail>>) -> bool {
+        match rail.index(index.clone()) {
             Node::Sensor(sensor) | Node::Station(sensor) => {
-                sensor.free() && rail.neighbors(index).all(|x| self.neighbours_free(x, rail))
+                sensor.free() && rail.neighbors(index.clone()).into_iter().all(|x| self.neighbours_free(x, rail))
             }
             Node::Signal(_) => true,
             _ => rail.neighbors(index).all(|index| self.neighbours_free(index, rail)),
         }
     }
 
-    pub fn path_free(&self, path: &Vec<NodeIndex>, graph: &mut LocoGraph) -> bool {
+    pub fn path_free(&self, path: &Vec<NodeIndex>, graph: &LocoGraph) -> bool {
         let mut is_in_range = false;
 
         path.iter()
             .filter_map(|x| {
-                if let Node::Signal(sig) = graph.graph().index(**x) {
+                if let Node::Signal(sig) = graph.graph().index(*x) {
                     if is_in_range {
                         is_in_range = false;
-                        return Some(sig.free(**x, path, graph));
-                    } else if *sig == self {
-                        is_in_range = true;
+                        return Some(sig.free());
                     }
-                } else if let Node::Sensor(sensor) = graph.graph().index(**x) {
+                } else if let Node::Sensor(sensor) = graph.graph().index(*x) {
                     if is_in_range {
                         return Some(sensor.free());
                     }
                 }
                 None
             })
-            .all(|sensor| sensor)
+            .all(|sensor| sensor == Status::Free)
     }
 }
 

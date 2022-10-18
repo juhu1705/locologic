@@ -1,26 +1,24 @@
-use std::borrow::Borrow;
 use crate::control::rail_system::components::{Direction, Position, Rail, Sensor, Signal, Switch};
 use crate::control::train::Train;
 use locodrive::args::AddressArg;
 use petgraph::algo::astar;
 use petgraph::graph::{Graph, NodeIndex};
-use petgraph::visit::Walker;
 use std::collections::HashMap;
 use std::ops::Index;
 
-pub enum Node {
-    Signal(Signal),
-    Sensor(Sensor),
+pub enum Node<'t> {
+    Signal(Signal<'t>),
+    Sensor(Sensor<'t>),
     Switch(Switch),
-    Station(Sensor),
+    Station(Sensor<'t>),
 }
 
-pub struct LocoGraph {
-    graph: Graph<Node, Vec<Rail>>,
+pub struct LocoGraph<'t> {
+    graph: Graph<Node<'t>, Vec<Rail>>,
     trains: HashMap<AddressArg, Train>,
 }
 
-impl LocoGraph {
+impl<'t> LocoGraph<'t> {
     pub fn new() -> Self {
         let mut graph = Graph::<Node, Vec<Rail>>::new();
 
@@ -40,8 +38,12 @@ impl LocoGraph {
         }
     }
 
-    pub(crate) fn graph(&mut self) -> &mut Graph<Node, Vec<Rail>> {
+    pub(crate) fn mut_graph(&mut self) -> &mut Graph<Node, Vec<Rail>> {
         &mut self.graph
+    }
+
+    pub(crate) fn graph(&self) -> &Graph<Node, Vec<Rail>> {
+        &self.graph
     }
 
     pub fn shortest_path(

@@ -1,6 +1,5 @@
 use crate::general::UpdateAble;
 use locodrive::args::{AddressArg, SlotArg, SpeedArg};
-use std::collections::HashMap;
 use std::time::Duration;
 
 pub struct Clock {
