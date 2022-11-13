@@ -42,8 +42,7 @@ impl Train {
 }
 
 impl UpdateAble for Train {
-    fn update(_tick: Duration) {
-    }
+    fn update(_tick: Duration) {}
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
