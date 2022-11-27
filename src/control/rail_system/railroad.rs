@@ -3,7 +3,7 @@ use crate::control::rail_system::rail_graph::LocoGraph;
 use crate::control::train::Train;
 use locodrive::args::AddressArg;
 use std::collections::HashMap;
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 
 pub struct Railroad<'t> {
     road: LocoGraph<'t>,
@@ -14,11 +14,15 @@ pub struct Railroad<'t> {
 }
 
 impl<'t> Railroad<'t> {
-    pub fn get_sensor_mutex<'r>(&'r self, adr: &'r AddressArg) -> Option<&'t Mutex<Sensor<'r>>> {
+    pub fn get_sensor_mutex(&'t self, adr: &'t AddressArg) -> Option<&'t Mutex<Sensor<'t>>> {
         self.sensors.get(adr)
     }
 
-    pub fn get_signal_mutex<'r>(&'r self, adr: &AddressArg) -> Option<&'t Mutex<Signal<'r>>> {
+    pub fn get_signal_mutex(&'t self, adr: &AddressArg) -> Option<&'t Mutex<Signal<'t>>> {
         self.signals.get(adr)
+    }
+
+    pub fn get_train(&self, adr: &AddressArg) -> Option<&Mutex<Train>> {
+        self.trains.get(adr)
     }
 }

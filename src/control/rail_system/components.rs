@@ -157,11 +157,11 @@ pub struct Sensor<'t> {
     trains: Vec<AddressArg>,
     actual: Option<AddressArg>,
     pos: Position,
-    block: Box<Block<'t>>,
+    block: Box<&'t Block<'t>>,
 }
 
 impl<'t> Sensor<'t> {
-    pub fn new(adr: AddressArg, pos: Position, block: Box<Block<'t>>) -> Sensor<'t> {
+    pub fn new(adr: AddressArg, pos: Position, block: Box<&'t Block<'t>>) -> Sensor<'t> {
         Sensor {
             address: adr,
             status: Status::Free,
@@ -215,7 +215,7 @@ pub struct Signal<'t> {
     pos: Position,
     status: Status,
     trains: Vec<AddressArg>,
-    block: Box<Block<'t>>,
+    block: Box<&'t Block<'t>>,
 }
 
 impl<'t> Signal<'t> {
@@ -223,7 +223,7 @@ impl<'t> Signal<'t> {
         sig_type: SignalType,
         address: AddressArg,
         pos: Position,
-        block: Box<Block<'t>>,
+        block: Box<&'t Block<'t>>,
     ) -> Self {
         Signal {
             address,
@@ -269,29 +269,29 @@ impl<'t> Signal<'t> {
         }
     }
 
-    pub fn block_free<'r>(&self, index: NodeIndex, graph: &'r LocoGraph<'r>) -> bool {
+    pub fn block_free<'r>(&self, index: NodeIndex, graph: &'r LocoGraph<'r>, railroad: &'r Railroad<'r>) -> bool {
         let rail = graph.graph();
 
-        rail.neighbors(index).all(|x| self.neighbours_free(x, rail))
+        rail.neighbors(index).all(|x| self.neighbours_free(x, rail, railroad))
     }
 
-    fn neighbours_free(&self, index: NodeIndex, rail: &Graph<Node, Vec<Rail>>) -> bool {
+    fn neighbours_free<'r>(&self, index: NodeIndex, rail: &'r Graph<Node, Vec<Rail>>, railroad: &'r Railroad<'r>) -> bool {
         match rail.index(index.clone()) {
             Node::Sensor(sensor) | Node::Station(sensor) => {
-                sensor.status() == Status::Free
+                railroad.get_sensor_mutex(sensor).unwrap().lock().unwrap().status() == Status::Free
                     && rail
                         .neighbors(index.clone())
                         .into_iter()
-                        .all(|x| self.neighbours_free(x, rail))
+                        .all(|x| self.neighbours_free(x, rail, railroad))
             }
             Node::Signal(_) => true,
             _ => rail
                 .neighbors(index)
-                .all(|index| self.neighbours_free(index, rail)),
+                .all(|index| self.neighbours_free(index, rail, railroad)),
         }
     }
 
-    pub fn path_free<'r>(&self, path: &Vec<NodeIndex>, graph: &'r LocoGraph<'r>) -> bool {
+    pub fn path_free<'r>(&self, path: &Vec<NodeIndex>, graph: &'r LocoGraph<'r>, railroad: &'r Railroad<'r>) -> bool {
         let mut is_in_range = false;
 
         path.iter()
@@ -299,11 +299,11 @@ impl<'t> Signal<'t> {
                 if let Node::Signal(sig) = graph.graph().index(*x) {
                     if is_in_range {
                         is_in_range = false;
-                        return Some(sig.status());
+                        return Some(railroad.get_signal_mutex(sig).unwrap().lock().unwrap().status());
                     }
                 } else if let Node::Sensor(sensor) = graph.graph().index(*x) {
                     if is_in_range {
-                        return Some(sensor.status());
+                        return Some(railroad.get_sensor_mutex(sensor).unwrap().lock().unwrap().status());
                     }
                 }
                 None
@@ -335,6 +335,21 @@ impl<'t> Block<'t> {
         }
     }
 
+    pub fn add_sensor(&mut self, sensor: &'t Sensor<'t>) -> &mut Self {
+        self.sensors.push(sensor);
+        self
+    }
+
+    pub fn add_in_signal(&mut self, signal: &'t Signal<'t>) -> &mut Self {
+        self.in_signals.push(signal);
+        self
+    }
+
+    pub fn add_out_signal(&mut self, signal: &'t Signal<'t>) -> &mut Self {
+        self.out_signals.push(signal);
+        self
+    }
+
     pub fn get_block_status(&self) -> Status {
         self.status
     }
@@ -348,7 +363,7 @@ impl<'t> Block<'t> {
     pub async fn occupy(&mut self) {
         self.status = Status::Occupied;
 
-        self.update_signals().await;
+        self.update_signals();
     }
 
     pub async fn free<'r: 't>(&'r mut self, sensor: &'r Sensor<'r>) {
@@ -358,23 +373,23 @@ impl<'t> Block<'t> {
             .fold(Status::Free, |status, sensor| status | sensor.status());
 
         if let Status::Free = self.status {
-            self.update_signals_by_sensor(sensor).await;
+            self.update_signals_by_sensor(sensor);
         }
     }
 
-    async fn update_signals(&mut self) {
+    fn update_signals(&mut self) {
         for signal in &self.in_signals {
             if let Some(mut_signal) = self.railroad.get_signal_mutex(&signal.address) {
-                let mut m_signal = mut_signal.lock().await;
+                let mut m_signal = mut_signal.lock().unwrap();
                 m_signal.update(self.status);
             }
         }
     }
 
-    async fn update_signals_by_sensor<'r: 't>(&'r mut self, sensor: &'r Sensor<'r>) {
+    fn update_signals_by_sensor<'r: 't>(&'r mut self, sensor: &'r Sensor<'r>) {
         for signal in &self.in_signals {
             if let Some(mut_signal) = self.railroad.get_signal_mutex(&signal.address) {
-                let mut m_signal = mut_signal.lock().await;
+                let mut m_signal = mut_signal.lock().unwrap();
                 m_signal.sensor_update(sensor);
             }
         }
@@ -385,6 +400,16 @@ pub struct Switch {
     pos: Position,
     dir: SwitchDirection,
     updated: bool,
+}
+
+impl Switch {
+    pub fn new(pos: Position, dir: SwitchDirection, updated: bool) -> Self {
+        Switch {
+            pos,
+            dir,
+            updated
+        }
+    }
 }
 
 pub struct DecorationComponents {
