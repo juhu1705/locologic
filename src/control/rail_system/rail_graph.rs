@@ -1,8 +1,7 @@
-use crate::control::rail_system::components::{Block, Rail};
+use crate::control::rail_system::components::{Rail};
 use petgraph::algo::astar;
 use petgraph::graph::{Graph, NodeIndex};
 use std::ops::Index;
-use std::sync::Mutex;
 use locodrive::args::AddressArg;
 use crate::control::rail_system::railroad::Railroad;
 
@@ -14,12 +13,11 @@ pub enum Node {
     Station(AddressArg),
 }
 
-pub struct LocoGraph<'t> {
+pub struct LocoGraph {
     graph: Graph<Node, Vec<Rail>>,
-    blocks: Vec<Mutex<Block<'t>>>,
 }
 
-impl<'t> LocoGraph<'t> {
+impl LocoGraph {
     pub fn new() -> Self {
         let graph = Graph::<Node, Vec<Rail>>::new();
 
@@ -27,14 +25,14 @@ impl<'t> LocoGraph<'t> {
 
         // TEST CODE - END
 
-        LocoGraph { graph, blocks: vec![] }
+        LocoGraph { graph }
     }
 
-    pub(crate) fn mut_graph(&'t mut self) -> &'t mut Graph<Node, Vec<Rail>> {
+    pub(crate) fn mut_graph(&mut self) -> &mut Graph<Node, Vec<Rail>> {
         &mut self.graph
     }
 
-    pub(crate) fn graph(&'t self) -> &'t Graph<Node, Vec<Rail>> {
+    pub(crate) fn graph(&self) -> &Graph<Node, Vec<Rail>> {
         &self.graph
     }
 
@@ -42,14 +40,14 @@ impl<'t> LocoGraph<'t> {
         &self,
         start: NodeIndex,
         destination: NodeIndex,
-        railroad: &'t Railroad<'t>,
+        railroad: &Railroad,
     ) -> Option<(usize, Vec<NodeIndex>)> {
         astar(
             &self.graph,
             start,
             |goal| goal == destination,
             |cost| cost.weight().iter().map(|rail| rail.length()).sum(),
-            move |node: NodeIndex| {
+            |node: NodeIndex| {
                 match self.graph.index(node) {
                     Node::Sensor(sensor_adr) => {
                         if let Some(sensor_mut) = railroad.get_sensor_mutex(sensor_adr) {

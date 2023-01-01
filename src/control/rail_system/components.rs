@@ -151,24 +151,22 @@ impl ops::BitOr for Status {
     }
 }
 
-pub struct Sensor<'t> {
+pub struct Sensor {
     address: AddressArg,
     status: Status,
     trains: Vec<AddressArg>,
     actual: Option<AddressArg>,
     pos: Position,
-    block: Box<&'t Block<'t>>,
 }
 
-impl<'t> Sensor<'t> {
-    pub fn new(adr: AddressArg, pos: Position, block: Box<&'t Block<'t>>) -> Sensor<'t> {
+impl Sensor {
+    pub fn new(adr: AddressArg, pos: Position) -> Sensor {
         Sensor {
             address: adr,
             status: Status::Free,
             trains: vec![],
             actual: None,
             pos,
-            block,
         }
     }
 
@@ -209,21 +207,19 @@ pub enum SignalType {
     IntelligentPath,
 }
 
-pub struct Signal<'t> {
+pub struct Signal {
     address: AddressArg,
     sig_type: SignalType,
     pos: Position,
     status: Status,
     trains: Vec<AddressArg>,
-    block: Box<&'t Block<'t>>,
 }
 
-impl<'t> Signal<'t> {
+impl Signal {
     pub fn new(
         sig_type: SignalType,
         address: AddressArg,
         pos: Position,
-        block: Box<&'t Block<'t>>,
     ) -> Self {
         Signal {
             address,
@@ -231,7 +227,6 @@ impl<'t> Signal<'t> {
             pos,
             status: Status::Free,
             trains: vec![],
-            block,
         }
     }
 
@@ -239,43 +234,24 @@ impl<'t> Signal<'t> {
         self.status
     }
 
-    pub fn sensor_update(&mut self, trigger: &'t Sensor<'t>) {
-        match trigger.status {
-            Status::Free | Status::PathFree => {}
+    pub fn trigger_update(&mut self, trigger: &Status) {
+        self.status = match trigger {
+            Status::Free | Status::PathFree => self.status,
             Status::Reserved => match self.status {
-                Status::Free => self.status = Status::Reserved,
-                Status::Reserved => {}
-                Status::PathFree => {}
-                Status::Occupied => {}
+                Status::Free | Status::Reserved | Status::PathFree => Status::Reserved,
+                Status::Occupied => Status::Occupied,
             },
-            Status::Occupied => {
-                self.status = Status::Occupied;
-            }
+            Status::Occupied => Status::Occupied,
         }
     }
 
-    pub fn signal_update(&mut self, trigger: &'t Signal<'t>) {
-        match trigger.status {
-            Status::Free | Status::PathFree => {}
-            Status::Reserved => match self.status {
-                Status::Free => self.status = Status::Reserved,
-                Status::Reserved => {}
-                Status::PathFree => {}
-                Status::Occupied => {}
-            },
-            Status::Occupied => {
-                self.status = Status::Occupied;
-            }
-        }
-    }
-
-    pub fn block_free<'r>(&self, index: NodeIndex, graph: &'r LocoGraph<'r>, railroad: &'r Railroad<'r>) -> bool {
+    pub fn block_free<'r>(&self, index: NodeIndex, graph: &'r LocoGraph, railroad: &'r Railroad) -> bool {
         let rail = graph.graph();
 
         rail.neighbors(index).all(|x| self.neighbours_free(x, rail, railroad))
     }
 
-    fn neighbours_free<'r>(&self, index: NodeIndex, rail: &'r Graph<Node, Vec<Rail>>, railroad: &'r Railroad<'r>) -> bool {
+    fn neighbours_free<'r>(&self, index: NodeIndex, rail: &'r Graph<Node, Vec<Rail>>, railroad: &'r Railroad) -> bool {
         match rail.index(index.clone()) {
             Node::Sensor(sensor) | Node::Station(sensor) => {
                 railroad.get_sensor_mutex(sensor).unwrap().lock().unwrap().status() == Status::Free
@@ -291,7 +267,7 @@ impl<'t> Signal<'t> {
         }
     }
 
-    pub fn path_free<'r>(&self, path: &Vec<NodeIndex>, graph: &'r LocoGraph<'r>, railroad: &'r Railroad<'r>) -> bool {
+    pub fn path_free(&self, path: &Vec<NodeIndex>, graph: &LocoGraph, railroad: &Railroad) -> bool {
         let mut is_in_range = false;
 
         path.iter()
@@ -310,22 +286,18 @@ impl<'t> Signal<'t> {
             })
             .all(|sensor| sensor == Status::Free)
     }
-
-    pub fn update(&mut self, status: Status) {
-        self.status = status;
-    }
 }
 
 pub struct Block<'t> {
-    sensors: Vec<&'t Sensor<'t>>,
-    in_signals: Vec<&'t Signal<'t>>,
-    out_signals: Vec<&'t Signal<'t>>,
+    sensors: Vec<&'t Sensor>,
+    in_signals: Vec<&'t Signal>,
+    out_signals: Vec<&'t Signal>,
     status: Status,
-    railroad: &'t Railroad<'t>,
+    railroad: &'t Railroad,
 }
 
 impl<'t> Block<'t> {
-    pub fn new<'r>(railroad: &'r Railroad<'r>) -> Block<'r> {
+    pub fn new<'r>(railroad: &'r Railroad) -> Block<'r> {
         Block {
             sensors: vec![],
             in_signals: vec![],
@@ -335,17 +307,17 @@ impl<'t> Block<'t> {
         }
     }
 
-    pub fn add_sensor(&mut self, sensor: &'t Sensor<'t>) -> &mut Self {
+    pub fn add_sensor(&mut self, sensor: &'t Sensor) -> &mut Self {
         self.sensors.push(sensor);
         self
     }
 
-    pub fn add_in_signal(&mut self, signal: &'t Signal<'t>) -> &mut Self {
+    pub fn add_in_signal(&mut self, signal: &'t Signal) -> &mut Self {
         self.in_signals.push(signal);
         self
     }
 
-    pub fn add_out_signal(&mut self, signal: &'t Signal<'t>) -> &mut Self {
+    pub fn add_out_signal(&mut self, signal: &'t Signal) -> &mut Self {
         self.out_signals.push(signal);
         self
     }
@@ -366,7 +338,7 @@ impl<'t> Block<'t> {
         self.update_signals();
     }
 
-    pub async fn free<'r: 't>(&'r mut self, sensor: &'r Sensor<'r>) {
+    pub async fn free(&mut self, sensor: &Sensor) {
         self.status = self
             .sensors
             .iter()
@@ -381,16 +353,16 @@ impl<'t> Block<'t> {
         for signal in &self.in_signals {
             if let Some(mut_signal) = self.railroad.get_signal_mutex(&signal.address) {
                 let mut m_signal = mut_signal.lock().unwrap();
-                m_signal.update(self.status);
+                m_signal.trigger_update(&self.status);
             }
         }
     }
 
-    fn update_signals_by_sensor<'r: 't>(&'r mut self, sensor: &'r Sensor<'r>) {
+    fn update_signals_by_sensor(&mut self, sensor: &Sensor) {
         for signal in &self.in_signals {
             if let Some(mut_signal) = self.railroad.get_signal_mutex(&signal.address) {
                 let mut m_signal = mut_signal.lock().unwrap();
-                m_signal.sensor_update(sensor);
+                m_signal.trigger_update(&sensor.status);
             }
         }
     }
