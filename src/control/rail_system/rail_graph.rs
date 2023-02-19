@@ -7,10 +7,10 @@ use crate::control::rail_system::railroad::Railroad;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Copy)]
 pub enum Node {
-    Signal(AddressArg),
-    Sensor(AddressArg),
-    Switch(AddressArg),
-    Station(AddressArg),
+    Signal(AddressArg, Position),
+    Sensor(AddressArg, Position),
+    Switch(AddressArg, Position, bool),
+    Station(AddressArg, Position),
 }
 
 pub struct LocoGraph {

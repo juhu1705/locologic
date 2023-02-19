@@ -157,17 +157,15 @@ pub struct Sensor {
     status: Status,
     trains: Vec<AddressArg>,
     actual: Option<AddressArg>,
-    pos: Position,
 }
 
 impl Sensor {
-    pub fn new(adr: AddressArg, pos: Position) -> Sensor {
+    pub fn new(adr: AddressArg) -> Sensor {
         Sensor {
             address: adr,
             status: Status::Free,
             trains: vec![],
             actual: None,
-            pos,
         }
     }
 
@@ -212,7 +210,6 @@ pub enum SignalType {
 pub struct Signal {
     address: AddressArg,
     sig_type: SignalType,
-    pos: Position,
     status: Status,
     trains: Vec<AddressArg>,
 }
@@ -369,22 +366,34 @@ impl Block {
     }
 }
 
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SwitchType {
+    Straight_Right = 0,
+    Straight_Left = 1,
+    Right_Straight = 2,
+    Left_Straight = 3,
+    Left_Right = 4,
+    Right_Left = 5,
+}
+
 pub struct Switch {
-    pos: Position,
+    address: AddressArg,
     dir: SwitchDirection,
     updated: bool,
 }
 
 impl Switch {
-    pub fn new(pos: Position, dir: SwitchDirection, updated: bool) -> Self {
+    pub fn new(address: AddressArg, dir: SwitchDirection, updated: bool) -> Self {
         Switch {
-            pos,
+            address,
             dir,
             updated
         }
     }
 }
 
-pub struct DecorationComponents {
+pub struct LightComponents {
     pos: Position,
+    status: bool,
 }
