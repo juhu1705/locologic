@@ -1,9 +1,12 @@
-use crate::general::UpdateAble;
+use crate::control::rail_system::components::{Node, Signal};
+use crate::control::rail_system::railroad::Railroad;
 use locodrive::args::{AddressArg, SlotArg, SpeedArg};
+use petgraph::graph::NodeIndex;
 use std::time::Duration;
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Clock {
-    time: Duration,
+    _time: Duration,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -17,17 +20,23 @@ pub struct Train {
     actual_speed: SpeedArg,
     /// The speed the train should read
     speed: SpeedArg,
+    /// The trains position
+    position: NodeIndex,
+    /// Controls the driving process
+    route: Option<Vec<NodeIndex>>,
     /// Controls the driving table
     timetable: Vec<Station>,
 }
 
 impl Train {
-    pub fn new(address: AddressArg, slot: SlotArg) -> Self {
+    pub fn new(address: AddressArg, slot: SlotArg, position: NodeIndex) -> Self {
         Train {
             address,
             slot,
             actual_speed: SpeedArg::Stop,
             speed: SpeedArg::Stop,
+            position,
+            route: None,
             timetable: Vec::new(),
         }
     }
@@ -39,10 +48,43 @@ impl Train {
     pub fn address(&self) -> AddressArg {
         self.address
     }
-}
 
-impl UpdateAble for Train {
-    fn update(_tick: Duration) {}
+    pub async fn request_route(
+        &self,
+        signal: AddressArg,
+        railroad: &Railroad,
+    ) -> Option<Vec<&NodeIndex>> {
+        let route = self.route.as_ref()?;
+
+        let road = railroad.road().await;
+        let index = route.iter().position(|&r| match road.node_weight(r) {
+            Some(Node::Signal(adr, ..)) => *adr == signal,
+            _ => false,
+        })?;
+
+        let end = if let Some(i) = route[(index + 1)..]
+            .iter()
+            .position(|&r| matches!(road.node_weight(r), Some(Node::Signal(..))))
+        {
+            i + index + 2
+        } else {
+            route.len()
+        };
+
+        let vec: Vec<&NodeIndex> = route[index..end].iter().clone().collect();
+        Some(vec)
+    }
+
+    pub async fn notify(&mut self, _signal: &Signal, road: Vec<AddressArg>, railroad: &Railroad) {
+        for adr in road {
+            if let Some(mutex) = railroad.get_sensor_mutex(&adr) {
+                let mut sensor = mutex.lock().await;
+                sensor.block(self.address());
+            }
+        }
+    }
+
+    pub async fn update(&mut self, _tick: Duration, _railroad: &Railroad) {}
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
