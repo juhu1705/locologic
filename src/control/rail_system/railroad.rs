@@ -159,20 +159,50 @@ impl Builder {
         self.trains.insert(train.address(), train);
     }
 
-    pub fn add_sensor(&mut self, sensor: AddressArg, position: Position) {
+    pub fn add_sensors(
+        &mut self,
+        sensors: Vec<(AddressArg, Position)>,
+    ) -> Vec<(NodeIndex, AddressArg)> {
+        sensors
+            .iter()
+            .map(|(s_adr, s_pos)| (self.add_sensor(*s_adr, *s_pos), *s_adr))
+            .collect()
+    }
+
+    pub fn add_sensor(&mut self, sensor: AddressArg, position: Position) -> NodeIndex {
         if self.sensors.get(&sensor).is_none() {
             self.sensors.insert(sensor, Sensor::new(sensor));
         }
 
-        self.road.add_node(Node::Sensor(sensor, position));
+        self.road.add_node(Node::Sensor(sensor, position))
     }
 
-    pub fn add_station(&mut self, station: AddressArg, position: Position) {
+    pub fn add_stations(
+        &mut self,
+        stations: Vec<(AddressArg, Position)>,
+    ) -> Vec<(NodeIndex, AddressArg)> {
+        stations
+            .iter()
+            .map(|station| (self.add_station(station.0, station.1), station.0))
+            .collect()
+    }
+
+    pub fn add_station(&mut self, station: AddressArg, position: Position) -> NodeIndex {
         if self.sensors.get(&station).is_none() {
             self.sensors.insert(station, Sensor::new(station));
         }
 
-        self.road.add_node(Node::Station(station, position));
+        self.road.add_node(Node::Station(station, position))
+    }
+
+    pub fn add_signals(
+        &mut self,
+        signals: Vec<(AddressArg, SignalType, Position)>,
+    ) -> HashMap<AddressArg, NodeIndex> {
+        signals
+            .into_iter()
+            .filter_map(|signal| Some((signal.0, self.add_signal(signal.0, signal.1, signal.2)?)))
+            .collect()
     }
 
     pub fn add_signal(
@@ -181,15 +211,15 @@ impl Builder {
         signal_type: SignalType,
         position: Position,
     ) -> Option<NodeIndex> {
-        if self.signals.get(&signal).is_none() {
-            let node = self.road.add_node(Node::Signal(signal, position));
-
-            self.signals
-                .insert(signal, Signal::new(signal, signal_type, node));
-            Some(node)
-        } else {
-            None
+        if self.signals.get(&signal).is_some() {
+            return None;
         }
+
+        let node = self.road.add_node(Node::Signal(signal, position));
+
+        self.signals
+            .insert(signal, Signal::new(signal, signal_type, node));
+        Some(node)
     }
 
     pub fn add_crossing(&mut self, cross: AddressArg, pos: Position) -> (NodeIndex, NodeIndex) {
@@ -202,6 +232,16 @@ impl Builder {
         }
 
         (node1, node2)
+    }
+
+    pub fn add_switches(
+        &mut self,
+        switches: Vec<(AddressArg, Position, SwitchType)>,
+    ) -> Vec<(NodeIndex, AddressArg)> {
+        switches
+            .into_iter()
+            .map(|switch| (self.add_switch(switch.0, switch.1, switch.2), switch.0))
+            .collect()
     }
 
     pub fn add_switch(
@@ -308,5 +348,241 @@ impl Builder {
         }
 
         railroad
+    }
+}
+
+#[cfg(test)]
+mod railroad_test {
+    use crate::control::rail_system::components::{Coord, Direction, Position, SwitchType};
+    use crate::control::rail_system::railroad::{Builder, Railroad};
+    use locodrive::args::AddressArg;
+    use petgraph::graph::NodeIndex;
+    use std::sync::Arc;
+
+    #[allow(dead_code)]
+    pub async fn create_test_railroad() -> (
+        Railroad,
+        Vec<(NodeIndex, AddressArg)>,
+        Vec<(NodeIndex, AddressArg)>,
+    ) {
+        let mut builder = Builder::new();
+
+        let sensors = builder.add_sensors(vec![
+            (
+                AddressArg::new(0),
+                Position::new(Coord(0, 0, 0), Direction::East),
+            ),
+            (
+                AddressArg::new(1),
+                Position::new(Coord(0, 0, 0), Direction::East),
+            ),
+            (
+                AddressArg::new(2),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(3),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(4),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(5),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(6),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(7),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(8),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(9),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(10),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(11),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(12),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(13),
+                Position::new(Coord(0, 0, 0), Direction::East),
+            ),
+            (
+                AddressArg::new(14),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(15),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(16),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(17),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(18),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(19),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+            (
+                AddressArg::new(20),
+                Position::new(Coord(0, 0, 1), Direction::East),
+            ),
+        ]);
+
+        let switches = builder.add_switches(vec![
+            (
+                AddressArg::new(0),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(1),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(2),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(3),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(4),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(5),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(6),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(7),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(8),
+                Position::new(Coord(0, 0, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(9),
+                Position::new(Coord(0, 0, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(10),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(11),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(12),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(13),
+                Position::new(Coord(0, 0, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(14),
+                Position::new(Coord(0, 0, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(15),
+                Position::new(Coord(0, 0, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(16),
+                Position::new(Coord(0, 0, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(17),
+                Position::new(Coord(0, 0, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(18),
+                Position::new(Coord(0, 0, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                AddressArg::new(19),
+                Position::new(Coord(0, 0, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+        ]);
+
+        builder.add_signals(vec![]);
+
+        builder.connect(sensors[5].0, sensors[3].0, vec![]);
+        builder.connect(sensors[3].0, sensors[4].0, vec![]);
+
+        (builder.build().await, switches, sensors)
+    }
+
+    #[tokio::test]
+    pub async fn test_road() {
+        let (r, _switches, sensors) = create_test_railroad().await;
+
+        let railroad = Arc::new(r);
+
+        let sensor5index = sensors.iter().find(|(_, address)| address.address() == 5).unwrap().0;
+        let sensor4index = sensors.iter().find(|(_, address)| address.address() == 4).unwrap().0;
+        let sensor3index = sensors.iter().find(|(_, address)| address.address() == 3).unwrap().0;
+
+        let route =
+            Railroad::shortest_path(
+                railroad.clone(),
+                sensor5index,
+                sensor4index,
+            )
+            .await;
+
+        assert_eq!(route, Some((0, vec![sensor5index, sensor3index, sensor4index])))
     }
 }
