@@ -5,6 +5,8 @@ use crate::control::train::Train;
 use locodrive::args::AddressArg;
 use petgraph::algo::astar;
 use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex};
+use petgraph::visit::EdgeRef;
+use petgraph::Graph;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::Index;
@@ -15,19 +17,20 @@ use tokio::task::spawn_blocking;
 pub struct Railroad {
     road: Mutex<DiGraph<Node, Vec<Rail>>>,
     trains: HashMap<AddressArg, Mutex<Train>>,
-    sensors: HashMap<AddressArg, Mutex<Sensor>>,
+    sensors: HashMap<AddressArg, (Mutex<Sensor>, Vec<NodeIndex>)>,
     signals: HashMap<AddressArg, Mutex<Signal>>,
     crossings: HashMap<AddressArg, Mutex<Cross>>,
-    switches: HashMap<AddressArg, Mutex<Switch>>,
+    switches: HashMap<AddressArg, (Mutex<Switch>, Vec<NodeIndex>)>,
 }
 
 impl Railroad {
+    /// Returns a **clone** of the railroad
     pub async fn road(&self) -> DiGraph<Node, Vec<Rail>> {
         self.road.lock().await.clone()
     }
 
     pub fn get_sensor_mutex(&self, adr: &AddressArg) -> Option<&Mutex<Sensor>> {
-        self.sensors.get(adr)
+        Some(&self.sensors.get(adr)?.0)
     }
 
     pub fn get_signal_mutex(&self, adr: &AddressArg) -> Option<&Mutex<Signal>> {
@@ -39,7 +42,7 @@ impl Railroad {
     }
 
     pub fn get_switch_mutex(&self, adr: &AddressArg) -> Option<&Mutex<Switch>> {
-        self.switches.get(adr)
+        Some(&self.switches.get(adr)?.0)
     }
 
     pub fn get_crossing_mutex(&self, adr: &AddressArg) -> Option<&Mutex<Cross>> {
@@ -57,35 +60,11 @@ impl Railroad {
                 &graph,
                 start,
                 |goal| goal == destination,
-                |cost| cost.weight().iter().map(Rail::length).sum(),
-                |node| match &graph.index(node) {
-                    Node::Sensor(sensor_adr, ..) => {
-                        if let Some(sensor_mut) = rail.get_sensor_mutex(sensor_adr) {
-                            let train = {
-                                let sensor = sensor_mut.blocking_lock();
-                                *sensor.train()
-                            };
-
-                            if if let Some(train) = train {
-                                if let Some(t) = rail.get_train(&train) {
-                                    t.blocking_lock().stands()
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            } {
-                                100
-                            } else {
-                                1
-                            }
-                        } else {
-                            100
-                        }
-                    }
-                    Node::Station(..) => 50,
-                    _ => 1,
+                |cost| {
+                    let rail_cost: usize = cost.weight().iter().map(Rail::length).sum();
+                    rail_cost + node_cost(&graph, cost.target(), rail.clone())
                 },
+                |node| estimate_costs(&graph, node, rail.clone(), destination),
             )
         })
         .await
@@ -97,13 +76,53 @@ impl Railroad {
     }
 }
 
+fn estimate_costs(
+    graph: &Graph<Node, Vec<Rail>>,
+    node: NodeIndex,
+    rail: Arc<Railroad>,
+    dest: NodeIndex,
+) -> usize {
+    let node_pos = graph.index(node).position(&rail);
+    let dest_pos = graph.index(dest).position(&rail);
+
+    node_pos.coord().abs_distance(&dest_pos.coord())
+}
+
+fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad>) -> usize {
+    match graph.index(node) {
+        Node::Sensor(sensor_adr, ..) => {
+            if let Some(sensor_mut) = rail.get_sensor_mutex(sensor_adr) {
+                if if let Some(train) = {
+                    *(sensor_mut.blocking_lock()).train()
+                } {
+                    if let Some(t) = rail.get_train(&train) {
+                        t.blocking_lock().stands()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                } {
+                    100
+                } else {
+                    1
+                }
+            } else {
+                100
+            }
+        }
+        Node::Station(..) => 500,
+        _ => 1,
+    }
+}
+
 pub struct Builder {
     road: DiGraph<Node, Vec<Rail>>,
     trains: HashMap<AddressArg, Train>,
-    sensors: HashMap<AddressArg, Sensor>,
+    sensors: HashMap<AddressArg, (Sensor, Vec<NodeIndex>)>,
     signals: HashMap<AddressArg, Signal>,
     crossings: HashMap<AddressArg, Cross>,
-    switches: HashMap<AddressArg, Switch>,
+    switches: HashMap<AddressArg, (Switch, Vec<NodeIndex>)>,
 }
 
 impl Default for Builder {
@@ -139,11 +158,24 @@ impl Builder {
             map
         }
 
+        async fn copy_index_map<R, T, L>(input: &HashMap<R, (Mutex<T>, L)>) -> HashMap<R, (T, L)>
+        where
+            R: Clone + Hash + Eq,
+            T: Clone,
+            L: Clone,
+        {
+            let mut map = HashMap::new();
+            for (adr, val) in input {
+                map.insert(adr.clone(), (val.0.lock().await.clone(), val.1.clone()));
+            }
+            map
+        }
+
         let trains = copy_map(&railroad.trains).await;
-        let sensors = copy_map(&railroad.sensors).await;
+        let sensors = copy_index_map(&railroad.sensors).await;
         let signals = copy_map(&railroad.signals).await;
         let crossings = copy_map(&railroad.crossings).await;
-        let switches = copy_map(&railroad.switches).await;
+        let switches = copy_index_map(&railroad.switches).await;
 
         Builder {
             road,
@@ -170,11 +202,16 @@ impl Builder {
     }
 
     pub fn add_sensor(&mut self, sensor: AddressArg, position: Position) -> NodeIndex {
-        if self.sensors.get(&sensor).is_none() {
-            self.sensors.insert(sensor, Sensor::new(sensor));
+        let node = self.road.add_node(Node::Sensor(sensor, position));
+
+        if let Some((_, vector)) = self.sensors.get_mut(&sensor) {
+            vector.push(node);
+        } else {
+            self.sensors
+                .insert(sensor, (Sensor::new(sensor), vec![node]));
         }
 
-        self.road.add_node(Node::Sensor(sensor, position))
+        node
     }
 
     pub fn add_stations(
@@ -188,11 +225,16 @@ impl Builder {
     }
 
     pub fn add_station(&mut self, station: AddressArg, position: Position) -> NodeIndex {
-        if self.sensors.get(&station).is_none() {
-            self.sensors.insert(station, Sensor::new(station));
+        let index = self.road.add_node(Node::Station(station, position));
+
+        if let Some((_, vector)) = self.sensors.get_mut(&station) {
+            vector.push(index)
+        } else {
+            self.sensors
+                .insert(station, (Sensor::new(station), vec![index]));
         }
 
-        self.road.add_node(Node::Station(station, position))
+        index
     }
 
     pub fn add_signals(
@@ -222,16 +264,22 @@ impl Builder {
         Some(node)
     }
 
-    pub fn add_crossing(&mut self, cross: AddressArg, pos: Position) -> (NodeIndex, NodeIndex) {
+    pub fn add_crossing(
+        &mut self,
+        cross: AddressArg,
+        pos: Position,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        if self.crossings.get(&cross).is_some() {
+            return None;
+        }
+
         let node1 = self.road.add_node(Node::Cross(cross));
         let node2 = self.road.add_node(Node::Cross(cross));
 
-        if self.crossings.get(&cross).is_none() {
-            self.crossings
-                .insert(cross, Cross::new(cross, pos, (node1, node2)));
-        }
+        self.crossings
+            .insert(cross, Cross::new(cross, pos, (node1, node2)));
 
-        (node1, node2)
+        Some((node1, node2))
     }
 
     pub fn add_switches(
@@ -250,11 +298,16 @@ impl Builder {
         position: Position,
         s_type: SwitchType,
     ) -> NodeIndex {
-        if self.switches.get(&switch).is_none() {
-            self.switches.insert(switch, Switch::new(switch));
+        let index = self.road.add_node(Node::Switch(switch, position, s_type));
+
+        if let Some((_, vector)) = self.switches.get_mut(&switch) {
+            vector.push(index)
+        } else {
+            self.switches
+                .insert(switch, (Switch::new(switch), vec![index]));
         }
 
-        self.road.add_node(Node::Switch(switch, position, s_type))
+        index
     }
 
     pub fn remove_train(&mut self, adr: &AddressArg) {
@@ -287,18 +340,18 @@ impl Builder {
     ) -> Option<EdgeIndex> {
         let neighbours = self.road.neighbors(from).count();
 
-        if neighbours < {
-            if self.road.node_weight(to).is_none() {
-                0
-            } else if let Some(node) = self.road.node_weight(from) {
-                match node {
-                    Node::Switch(..) => 2,
-                    _ => 1,
-                }
-            } else {
-                0
+        let max_node_neighbours = if self.road.node_weight(to).is_none() {
+            0
+        } else if let Some(node) = self.road.node_weight(from) {
+            match node {
+                Node::Switch(..) => 2,
+                _ => 1,
             }
-        } {
+        } else {
+            0
+        };
+
+        if neighbours < max_node_neighbours {
             Some(self.road.update_edge(from, to, rail))
         } else {
             None
@@ -315,7 +368,7 @@ impl Builder {
         let sensors = self
             .sensors
             .into_iter()
-            .map(|(adr, sensor)| (adr, Mutex::new(sensor)))
+            .map(|(adr, sensor)| (adr, (Mutex::new(sensor.0), sensor.1)))
             .collect();
         let signals = self
             .signals
@@ -330,7 +383,7 @@ impl Builder {
         let switches = self
             .switches
             .into_iter()
-            .map(|(adr, node)| (adr, Mutex::new(node)))
+            .map(|(adr, switch)| (adr, (Mutex::new(switch.0), switch.1)))
             .collect();
 
         let railroad = Railroad {
@@ -342,8 +395,8 @@ impl Builder {
             switches,
         };
 
-        for signal in &railroad.signals {
-            let mut signal = signal.1.lock().await;
+        for signal in railroad.signals.values() {
+            let mut signal = signal.lock().await;
             signal.initialize(&railroad).await;
         }
 
@@ -374,19 +427,19 @@ mod railroad_test {
             ),
             (
                 AddressArg::new(1),
-                Position::new(Coord(0, 0, 0), Direction::East),
+                Position::new(Coord(30, 30, 0), Direction::East),
             ),
             (
                 AddressArg::new(2),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(50, 50, 1), Direction::East),
             ),
             (
                 AddressArg::new(3),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(20, 20, 1), Direction::East),
             ),
             (
                 AddressArg::new(4),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(100, 100, 1), Direction::East),
             ),
             (
                 AddressArg::new(5),
@@ -560,7 +613,8 @@ mod railroad_test {
         builder.add_signals(vec![]);
 
         builder.connect(sensors[5].0, sensors[3].0, vec![]);
-        builder.connect(sensors[3].0, sensors[4].0, vec![]);
+        builder.connect(sensors[3].0, sensors[1].0, vec![]);
+        builder.connect(sensors[1].0, sensors[4].0, vec![]);
 
         (builder.build().await, switches, sensors)
     }
@@ -571,18 +625,40 @@ mod railroad_test {
 
         let railroad = Arc::new(r);
 
-        let sensor5index = sensors.iter().find(|(_, address)| address.address() == 5).unwrap().0;
-        let sensor4index = sensors.iter().find(|(_, address)| address.address() == 4).unwrap().0;
-        let sensor3index = sensors.iter().find(|(_, address)| address.address() == 3).unwrap().0;
+        let sensor5index = sensors
+            .iter()
+            .find(|(_, address)| address.address() == 5)
+            .unwrap()
+            .0;
+        let sensor4index = sensors
+            .iter()
+            .find(|(_, address)| address.address() == 4)
+            .unwrap()
+            .0;
+        let sensor3index = sensors
+            .iter()
+            .find(|(_, address)| address.address() == 3)
+            .unwrap()
+            .0;
+        let _sensor2index = sensors
+            .iter()
+            .find(|(_, address)| address.address() == 2)
+            .unwrap()
+            .0;
+        let sensor1index = sensors
+            .iter()
+            .find(|(_, address)| address.address() == 1)
+            .unwrap()
+            .0;
 
-        let route =
-            Railroad::shortest_path(
-                railroad.clone(),
-                sensor5index,
-                sensor4index,
-            )
-            .await;
+        let route = Railroad::shortest_path(railroad.clone(), sensor5index, sensor4index).await;
 
-        assert_eq!(route, Some((0, vec![sensor5index, sensor3index, sensor4index])))
+        assert_eq!(
+            route,
+            Some((
+                3,
+                vec![sensor5index, sensor3index, sensor1index, sensor4index]
+            ))
+        )
     }
 }

@@ -18,6 +18,24 @@ pub enum Node {
     Cross(AddressArg),
 }
 
+impl Node {
+    pub fn position(&self, rail: &Railroad) -> Position {
+        match self {
+            Node::Signal(_, position) => *position,
+            Node::Sensor(_, position) => *position,
+            Node::Switch(_, position, _) => *position,
+            Node::Station(_, position) => *position,
+            Node::Cross(adr) => {
+                if let Some(cross) = rail.get_crossing_mutex(adr) {
+                    cross.blocking_lock().pos
+                } else {
+                    Position::new(Coord(0, 0, 0), Direction::North)
+                }
+            }
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Direction {
@@ -180,17 +198,28 @@ impl Coord {
     /// Returns a coordinate one step ahead in the given `dir`ection
     pub fn step(&self, dir: Direction) -> Coord {
         match dir {
-            Direction::North => { Coord(self.x() + 1, self.y(), self.z()) }
-            Direction::Northeast => { Coord(self.x() + 1, self.y() + 1, self.z()) }
-            Direction::East => { Coord(self.x(), self.y() + 1, self.z()) }
-            Direction::Southeast => { Coord(self.x() - 1, self.y() + 1, self.z()) }
-            Direction::South => { Coord(self.x() - 1, self.y(), self.z()) }
-            Direction::Southwest => { Coord(self.x() - 1, self.y() - 1, self.z()) }
-            Direction::West => { Coord(self.x(), self.y() - 1, self.z()) }
-            Direction::Northwest => { Coord(self.x() + 1, self.y() - 1, self.z()) }
-            Direction::Up => { Coord(self.x(), self.y(), self.z() + 1) }
-            Direction::Down => { Coord(self.x(), self.y(), self.z() - 1) }
+            Direction::North => Coord(self.x() + 1, self.y(), self.z()),
+            Direction::Northeast => Coord(self.x() + 1, self.y() + 1, self.z()),
+            Direction::East => Coord(self.x(), self.y() + 1, self.z()),
+            Direction::Southeast => Coord(self.x() - 1, self.y() + 1, self.z()),
+            Direction::South => Coord(self.x() - 1, self.y(), self.z()),
+            Direction::Southwest => Coord(self.x() - 1, self.y() - 1, self.z()),
+            Direction::West => Coord(self.x(), self.y() - 1, self.z()),
+            Direction::Northwest => Coord(self.x() + 1, self.y() - 1, self.z()),
+            Direction::Up => Coord(self.x(), self.y(), self.z() + 1),
+            Direction::Down => Coord(self.x(), self.y(), self.z() - 1),
         }
+    }
+
+    pub fn abs_distance(&self, coord: &Coord) -> usize {
+        f64::sqrt(((self.x() + coord.x()).pow(2) +
+            (self.y() + coord.y()).pow(2) +
+            (self.z() + coord.z()).pow(2)) as f64)
+            as usize + 1
+    }
+
+    pub fn fold(&self) -> usize {
+        self.0 + self.1 + self.2
     }
 }
 
@@ -229,7 +258,7 @@ impl Position {
     pub(crate) fn one_step(&self) -> Position {
         Position {
             coord: self.coord.step(self.dir),
-            dir: self.dir
+            dir: self.dir,
         }
     }
 }
