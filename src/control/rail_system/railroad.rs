@@ -342,11 +342,11 @@ impl Builder {
 
         let ins = self
             .road
-            .neighbors_directed(node, Direction::Outgoing)
+            .neighbors_directed(node, Direction::Incoming)
             .count();
         let out = self
             .road
-            .neighbors_directed(node, Direction::Incoming)
+            .neighbors_directed(node, Direction::Outgoing)
             .count();
 
         match self.road.node_weight(node)? {
