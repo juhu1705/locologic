@@ -6,7 +6,7 @@ use locodrive::args::AddressArg;
 use petgraph::algo::astar;
 use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
-use petgraph::Graph;
+use petgraph::{Direction, Graph};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::Index;
@@ -53,7 +53,7 @@ impl Railroad {
         rail: Arc<Self>,
         start: NodeIndex,
         destination: NodeIndex,
-    ) -> Option<(usize, Vec<NodeIndex>)> {
+    ) -> Option<(f64, Vec<NodeIndex>)> {
         let graph = { rail.road.lock().await.clone() };
         if let Ok(result) = spawn_blocking(move || {
             astar(
@@ -61,7 +61,7 @@ impl Railroad {
                 start,
                 |goal| goal == destination,
                 |cost| {
-                    let rail_cost: usize = cost.weight().iter().map(Rail::length).sum();
+                    let rail_cost: f64 = cost.weight().iter().map(Rail::sqrt_distance).sum();
                     rail_cost + node_cost(&graph, cost.target(), rail.clone())
                 },
                 |node| estimate_costs(&graph, node, rail.clone(), destination),
@@ -81,20 +81,18 @@ fn estimate_costs(
     node: NodeIndex,
     rail: Arc<Railroad>,
     dest: NodeIndex,
-) -> usize {
+) -> f64 {
     let node_pos = graph.index(node).position(&rail);
     let dest_pos = graph.index(dest).position(&rail);
 
     node_pos.coord().abs_distance(&dest_pos.coord())
 }
 
-fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad>) -> usize {
+fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad>) -> f64 {
     match graph.index(node) {
         Node::Sensor(sensor_adr, ..) => {
             if let Some(sensor_mut) = rail.get_sensor_mutex(sensor_adr) {
-                if if let Some(train) = {
-                    *(sensor_mut.blocking_lock()).train()
-                } {
+                if if let Some(train) = { *(sensor_mut.blocking_lock()).train() } {
                     if let Some(t) = rail.get_train(&train) {
                         t.blocking_lock().stands()
                     } else {
@@ -103,16 +101,16 @@ fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad
                 } else {
                     false
                 } {
-                    100
+                    100f64
                 } else {
-                    1
+                    1f64
                 }
             } else {
-                100
+                100f64
             }
         }
-        Node::Station(..) => 500,
-        _ => 1,
+        Node::Station(..) => 500f64,
+        _ => 1f64,
     }
 }
 
@@ -332,26 +330,42 @@ impl Builder {
         self.switches.remove(adr);
     }
 
+    fn get_max_neighbours(&self, node: NodeIndex, dir: Direction) -> Option<bool> {
+        fn switch_max_neighbours(ins: usize, out: usize, dir: Direction) -> bool {
+            if ins < 2 && out < 2 {
+                true
+            } else {
+                !((ins >= 2 && dir == Direction::Incoming)
+                    || (out >= 2 && dir == Direction::Outgoing))
+            }
+        }
+
+        let ins = self
+            .road
+            .neighbors_directed(node, Direction::Outgoing)
+            .count();
+        let out = self
+            .road
+            .neighbors_directed(node, Direction::Incoming)
+            .count();
+
+        match self.road.node_weight(node)? {
+            Node::Switch(..) => Some(switch_max_neighbours(ins, out, dir)),
+            _ => Some(
+                (dir == Direction::Incoming && ins < 1) || (dir == Direction::Outgoing && out < 1),
+            ),
+        }
+    }
+
     pub fn connect(
         &mut self,
         from: NodeIndex,
         to: NodeIndex,
         rail: Vec<Rail>,
     ) -> Option<EdgeIndex> {
-        let neighbours = self.road.neighbors(from).count();
-
-        let max_node_neighbours = if self.road.node_weight(to).is_none() {
-            0
-        } else if let Some(node) = self.road.node_weight(from) {
-            match node {
-                Node::Switch(..) => 2,
-                _ => 1,
-            }
-        } else {
-            0
-        };
-
-        if neighbours < max_node_neighbours {
+        if self.get_max_neighbours(from, Direction::Outgoing)?
+            && self.get_max_neighbours(to, Direction::Incoming)?
+        {
             Some(self.road.update_edge(from, to, rail))
         } else {
             None
@@ -656,7 +670,7 @@ mod railroad_test {
         assert_eq!(
             route,
             Some((
-                3,
+                3f64,
                 vec![sensor5index, sensor3index, sensor1index, sensor4index]
             ))
         )

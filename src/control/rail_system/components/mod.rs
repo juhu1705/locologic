@@ -211,11 +211,12 @@ impl Coord {
         }
     }
 
-    pub fn abs_distance(&self, coord: &Coord) -> usize {
-        f64::sqrt(((self.x() + coord.x()).pow(2) +
-            (self.y() + coord.y()).pow(2) +
-            (self.z() + coord.z()).pow(2)) as f64)
-            as usize + 1
+    pub fn abs_distance(&self, coord: &Coord) -> f64 {
+        f64::sqrt(
+            ((self.x() + coord.x()).pow(2)
+                + (self.y() + coord.y()).pow(2)
+                + (self.z() + coord.z()).pow(2)) as f64,
+        )
     }
 
     pub fn fold(&self) -> usize {
@@ -355,6 +356,21 @@ impl Rail {
 
     pub fn length(&self) -> usize {
         self.length
+    }
+
+    pub fn sqrt_distance(&self) -> f64 {
+        match self.pos.dir {
+            Direction::North
+            | Direction::East
+            | Direction::South
+            | Direction::West
+            | Direction::Up
+            | Direction::Down => self.length as f64,
+            Direction::Northeast
+            | Direction::Southeast
+            | Direction::Southwest
+            | Direction::Northwest => ((self.length.pow(2) * 2) as f64).sqrt(),
+        }
     }
 
     pub fn pos(&self) -> Position {
