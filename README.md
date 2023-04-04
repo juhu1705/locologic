@@ -3,13 +3,12 @@
 A rust library for controlling a model train railroad system.
 
 ## Features
-| Feature                             | Description | Status   |
-|-------------------------------------|-------------|----------|
-| Automatic driving                   |             | PLANNING |
-| Save and load railway configuration |             | PLANNING |
-|                                     |             | PLANNING |
+| Feature                             | Description | Status     |
+|-------------------------------------|-------------|------------|
+| Automatic driving                   |             | IN PROCESS |
+| Save and load railway configuration |             | PLANNING   |
 
-## Importing the LocoDrive
+## Importing the LocoLogic
 
 As rust is able to use GitHub repositories directly as dependencies you can simply add 
 `locologic = { git = "https://github.com/juhu1705/locologic.git" }` to your `Cargo.toml`
@@ -44,4 +43,8 @@ or add some test logs to your commitment.
 | tokio-util | MIT     |
 | bytes      | MIT     |
 | tokio      | MIT     |
+| locodrive  | MIT     |
+| locodrive  | MIT     |
+| locodrive  | MIT     |
+| locodrive  | MIT     |
 | locodrive  | MIT     |

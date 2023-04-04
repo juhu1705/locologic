@@ -1,8 +1,5 @@
-use crate::control::rail_system::components::{
-    Cross, Node, Position, Rail, Sensor, Signal, SignalType, Switch, SwitchType,
-};
+use crate::control::rail_system::components::{Address, Cross, Node, Position, Rail, Sensor, Signal, SignalType, Speed, Switch, SwitchType};
 use crate::control::train::Train;
-use locodrive::args::AddressArg;
 use petgraph::algo::astar;
 use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -16,11 +13,11 @@ use tokio::task::spawn_blocking;
 
 pub struct Railroad {
     road: Mutex<DiGraph<Node, Vec<Rail>>>,
-    trains: HashMap<AddressArg, Mutex<Train>>,
-    sensors: HashMap<AddressArg, (Mutex<Sensor>, Vec<NodeIndex>)>,
-    signals: HashMap<AddressArg, Mutex<Signal>>,
-    crossings: HashMap<AddressArg, Mutex<Cross>>,
-    switches: HashMap<AddressArg, (Mutex<Switch>, Vec<NodeIndex>)>,
+    trains: HashMap<Address, Mutex<Train>>,
+    sensors: HashMap<Address, (Mutex<Sensor>, Vec<NodeIndex>)>,
+    signals: HashMap<Address, Mutex<Signal>>,
+    crossings: HashMap<Address, Mutex<Cross>>,
+    switches: HashMap<Address, (Mutex<Switch>, Vec<NodeIndex>)>,
 }
 
 impl Railroad {
@@ -29,23 +26,23 @@ impl Railroad {
         self.road.lock().await.clone()
     }
 
-    pub fn get_sensor_mutex(&self, adr: &AddressArg) -> Option<&Mutex<Sensor>> {
+    pub fn get_sensor_mutex(&self, adr: &Address) -> Option<&Mutex<Sensor>> {
         Some(&self.sensors.get(adr)?.0)
     }
 
-    pub fn get_signal_mutex(&self, adr: &AddressArg) -> Option<&Mutex<Signal>> {
+    pub fn get_signal_mutex(&self, adr: &Address) -> Option<&Mutex<Signal>> {
         self.signals.get(adr)
     }
 
-    pub fn get_train(&self, adr: &AddressArg) -> Option<&Mutex<Train>> {
+    pub fn get_train(&self, adr: &Address) -> Option<&Mutex<Train>> {
         self.trains.get(adr)
     }
 
-    pub fn get_switch_mutex(&self, adr: &AddressArg) -> Option<&Mutex<Switch>> {
+    pub fn get_switch_mutex(&self, adr: &Address) -> Option<&Mutex<Switch>> {
         Some(&self.switches.get(adr)?.0)
     }
 
-    pub fn get_crossing_mutex(&self, adr: &AddressArg) -> Option<&Mutex<Cross>> {
+    pub fn get_crossing_mutex(&self, adr: &Address) -> Option<&Mutex<Cross>> {
         self.crossings.get(adr)
     }
 
@@ -53,7 +50,7 @@ impl Railroad {
         rail: Arc<Self>,
         start: NodeIndex,
         destination: NodeIndex,
-    ) -> Option<(f64, Vec<NodeIndex>)> {
+    ) -> Option<(usize, Vec<NodeIndex>)> {
         let graph = { rail.road.lock().await.clone() };
         if let Ok(result) = spawn_blocking(move || {
             astar(
@@ -61,7 +58,7 @@ impl Railroad {
                 start,
                 |goal| goal == destination,
                 |cost| {
-                    let rail_cost: f64 = cost.weight().iter().map(Rail::sqrt_distance).sum();
+                    let rail_cost: usize = cost.weight().iter().map(Rail::manhattan_distance).sum();
                     rail_cost + node_cost(&graph, cost.target(), rail.clone())
                 },
                 |node| estimate_costs(&graph, node, rail.clone(), destination),
@@ -81,14 +78,14 @@ fn estimate_costs(
     node: NodeIndex,
     rail: Arc<Railroad>,
     dest: NodeIndex,
-) -> f64 {
+) -> usize {
     let node_pos = graph.index(node).position(&rail);
     let dest_pos = graph.index(dest).position(&rail);
 
-    node_pos.coord().abs_distance(&dest_pos.coord())
+    node_pos.coord().manhattan_distance(&dest_pos.coord())
 }
 
-fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad>) -> f64 {
+fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad>) -> usize {
     match graph.index(node) {
         Node::Sensor(sensor_adr, ..) => {
             if let Some(sensor_mut) = rail.get_sensor_mutex(sensor_adr) {
@@ -101,26 +98,26 @@ fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad
                 } else {
                     false
                 } {
-                    100f64
+                    100
                 } else {
-                    1f64
+                    2
                 }
             } else {
-                100f64
+                100
             }
         }
-        Node::Station(..) => 500f64,
-        _ => 1f64,
+        Node::Station(..) => 500,
+        _ => 2,
     }
 }
 
 pub struct Builder {
     road: DiGraph<Node, Vec<Rail>>,
-    trains: HashMap<AddressArg, Train>,
-    sensors: HashMap<AddressArg, (Sensor, Vec<NodeIndex>)>,
-    signals: HashMap<AddressArg, Signal>,
-    crossings: HashMap<AddressArg, Cross>,
-    switches: HashMap<AddressArg, (Switch, Vec<NodeIndex>)>,
+    trains: HashMap<Address, Train>,
+    sensors: HashMap<Address, (Sensor, Vec<NodeIndex>)>,
+    signals: HashMap<Address, Signal>,
+    crossings: HashMap<Address, Cross>,
+    switches: HashMap<Address, (Switch, Vec<NodeIndex>)>,
 }
 
 impl Default for Builder {
@@ -189,24 +186,21 @@ impl Builder {
         self.trains.insert(train.address(), train);
     }
 
-    pub fn add_sensors(
-        &mut self,
-        sensors: Vec<(AddressArg, Position)>,
-    ) -> Vec<(NodeIndex, AddressArg)> {
+    pub fn add_sensors(&mut self, sensors: Vec<(Address, Speed, Position)>) -> Vec<(NodeIndex, Address)> {
         sensors
             .iter()
-            .map(|(s_adr, s_pos)| (self.add_sensor(*s_adr, *s_pos), *s_adr))
+            .map(|(s_adr, max_speed, s_pos)| (self.add_sensor(*s_adr, *max_speed, *s_pos), *s_adr))
             .collect()
     }
 
-    pub fn add_sensor(&mut self, sensor: AddressArg, position: Position) -> NodeIndex {
+    pub fn add_sensor(&mut self, sensor: Address, max_speed: Speed, position: Position) -> NodeIndex {
         let node = self.road.add_node(Node::Sensor(sensor, position));
 
         if let Some((_, vector)) = self.sensors.get_mut(&sensor) {
             vector.push(node);
         } else {
             self.sensors
-                .insert(sensor, (Sensor::new(sensor), vec![node]));
+                .insert(sensor, (Sensor::new(sensor, max_speed), vec![node]));
         }
 
         node
@@ -214,22 +208,22 @@ impl Builder {
 
     pub fn add_stations(
         &mut self,
-        stations: Vec<(AddressArg, Position)>,
-    ) -> Vec<(NodeIndex, AddressArg)> {
+        stations: Vec<(Address, Speed, Position)>,
+    ) -> Vec<(NodeIndex, Address)> {
         stations
             .iter()
-            .map(|station| (self.add_station(station.0, station.1), station.0))
+            .map(|station| (self.add_station(station.0, station.1, station.2), station.0))
             .collect()
     }
 
-    pub fn add_station(&mut self, station: AddressArg, position: Position) -> NodeIndex {
+    pub fn add_station(&mut self, station: Address, max_speed: Speed, position: Position) -> NodeIndex {
         let index = self.road.add_node(Node::Station(station, position));
 
         if let Some((_, vector)) = self.sensors.get_mut(&station) {
             vector.push(index)
         } else {
             self.sensors
-                .insert(station, (Sensor::new(station), vec![index]));
+                .insert(station, (Sensor::new(station, max_speed), vec![index]));
         }
 
         index
@@ -237,8 +231,8 @@ impl Builder {
 
     pub fn add_signals(
         &mut self,
-        signals: Vec<(AddressArg, SignalType, Position)>,
-    ) -> HashMap<AddressArg, NodeIndex> {
+        signals: Vec<(Address, SignalType, Position)>,
+    ) -> HashMap<Address, NodeIndex> {
         signals
             .into_iter()
             .filter_map(|signal| Some((signal.0, self.add_signal(signal.0, signal.1, signal.2)?)))
@@ -247,7 +241,7 @@ impl Builder {
 
     pub fn add_signal(
         &mut self,
-        signal: AddressArg,
+        signal: Address,
         signal_type: SignalType,
         position: Position,
     ) -> Option<NodeIndex> {
@@ -264,7 +258,7 @@ impl Builder {
 
     pub fn add_crossing(
         &mut self,
-        cross: AddressArg,
+        cross: Address,
         pos: Position,
     ) -> Option<(NodeIndex, NodeIndex)> {
         if self.crossings.get(&cross).is_some() {
@@ -282,8 +276,8 @@ impl Builder {
 
     pub fn add_switches(
         &mut self,
-        switches: Vec<(AddressArg, Position, SwitchType)>,
-    ) -> Vec<(NodeIndex, AddressArg)> {
+        switches: Vec<(Address, Position, SwitchType)>,
+    ) -> Vec<(NodeIndex, Address)> {
         switches
             .into_iter()
             .map(|switch| (self.add_switch(switch.0, switch.1, switch.2), switch.0))
@@ -292,7 +286,7 @@ impl Builder {
 
     pub fn add_switch(
         &mut self,
-        switch: AddressArg,
+        switch: Address,
         position: Position,
         s_type: SwitchType,
     ) -> NodeIndex {
@@ -308,29 +302,29 @@ impl Builder {
         index
     }
 
-    pub fn remove_train(&mut self, adr: &AddressArg) {
+    pub fn remove_train(&mut self, adr: &Address) {
         self.trains.remove(adr);
     }
 
-    pub fn remove_sensor(&mut self, adr: &AddressArg) {
+    pub fn remove_sensor(&mut self, adr: &Address) {
         self.sensors.remove(adr);
     }
 
-    pub fn remove_signal(&mut self, adr: &AddressArg) {
+    pub fn remove_signal(&mut self, adr: &Address) {
         if let Some(signal) = self.signals.remove(adr) {
             self.road.remove_node(signal.representing_node());
         }
     }
 
-    pub fn remove_crossing(&mut self, adr: &AddressArg) {
+    pub fn remove_crossing(&mut self, adr: &Address) {
         self.crossings.remove(adr);
     }
 
-    pub fn remove_switch(&mut self, adr: &AddressArg) {
+    pub fn remove_switch(&mut self, adr: &Address) {
         self.switches.remove(adr);
     }
 
-    fn get_max_neighbours(&self, node: NodeIndex, dir: Direction) -> Option<bool> {
+    fn can_add_neighbour(&self, node: NodeIndex, dir: Direction) -> Option<bool> {
         fn switch_max_neighbours(ins: usize, out: usize, dir: Direction) -> bool {
             if ins < 2 && out < 2 {
                 true
@@ -363,8 +357,8 @@ impl Builder {
         to: NodeIndex,
         rail: Vec<Rail>,
     ) -> Option<EdgeIndex> {
-        if self.get_max_neighbours(from, Direction::Outgoing)?
-            && self.get_max_neighbours(to, Direction::Incoming)?
+        if self.can_add_neighbour(from, Direction::Outgoing)?
+            && self.can_add_neighbour(to, Direction::Incoming)?
         {
             Some(self.road.update_edge(from, to, rail))
         } else {
@@ -420,205 +414,225 @@ impl Builder {
 
 #[cfg(test)]
 mod railroad_test {
-    use crate::control::rail_system::components::{Coord, Direction, Position, SwitchType};
+    use crate::control::rail_system::components::{Address, Coord, Direction, Position, Speed, SwitchType};
     use crate::control::rail_system::railroad::{Builder, Railroad};
-    use locodrive::args::AddressArg;
     use petgraph::graph::NodeIndex;
     use std::sync::Arc;
 
     #[allow(dead_code)]
     pub async fn create_test_railroad() -> (
         Railroad,
-        Vec<(NodeIndex, AddressArg)>,
-        Vec<(NodeIndex, AddressArg)>,
+        Vec<(NodeIndex, Address)>,
+        Vec<(NodeIndex, Address)>,
     ) {
         let mut builder = Builder::new();
 
         let sensors = builder.add_sensors(vec![
             (
-                AddressArg::new(0),
+                Address::new(0),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 0), Direction::East),
             ),
             (
-                AddressArg::new(1),
+                Address::new(1),
+                Speed::Drive(128),
                 Position::new(Coord(30, 30, 0), Direction::East),
             ),
             (
-                AddressArg::new(2),
+                Address::new(2),
+                Speed::Drive(128),
                 Position::new(Coord(50, 50, 1), Direction::East),
             ),
             (
-                AddressArg::new(3),
+                Address::new(3),
+                Speed::Drive(128),
                 Position::new(Coord(20, 20, 1), Direction::East),
             ),
             (
-                AddressArg::new(4),
+                Address::new(4),
+                Speed::Drive(128),
                 Position::new(Coord(100, 100, 1), Direction::East),
             ),
             (
-                AddressArg::new(5),
+                Address::new(5),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(6),
+                Address::new(6),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(7),
+                Address::new(7),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(8),
+                Address::new(8),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(9),
+                Address::new(9),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(10),
+                Address::new(10),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(11),
+                Address::new(11),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(12),
+                Address::new(12),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(13),
+                Address::new(13),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 0), Direction::East),
             ),
             (
-                AddressArg::new(14),
+                Address::new(14),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(15),
+                Address::new(15),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(16),
+                Address::new(16),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(17),
+                Address::new(17),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(18),
+                Address::new(18),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(19),
+                Address::new(19),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
             (
-                AddressArg::new(20),
+                Address::new(20),
+                Speed::Drive(128),
                 Position::new(Coord(0, 0, 1), Direction::East),
             ),
         ]);
 
         let switches = builder.add_switches(vec![
             (
-                AddressArg::new(0),
+                Address::new(0),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(1),
+                Address::new(1),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(2),
+                Address::new(2),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(3),
+                Address::new(3),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(4),
+                Address::new(4),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(5),
+                Address::new(5),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(6),
+                Address::new(6),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(7),
+                Address::new(7),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(8),
+                Address::new(8),
                 Position::new(Coord(0, 0, 1), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(9),
+                Address::new(9),
                 Position::new(Coord(0, 0, 1), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(10),
+                Address::new(10),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(11),
+                Address::new(11),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(12),
+                Address::new(12),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(13),
+                Address::new(13),
                 Position::new(Coord(0, 0, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(14),
+                Address::new(14),
                 Position::new(Coord(0, 0, 1), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(15),
+                Address::new(15),
                 Position::new(Coord(0, 0, 1), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(16),
+                Address::new(16),
                 Position::new(Coord(0, 0, 1), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(17),
+                Address::new(17),
                 Position::new(Coord(0, 0, 1), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(18),
+                Address::new(18),
                 Position::new(Coord(0, 0, 1), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
-                AddressArg::new(19),
+                Address::new(19),
                 Position::new(Coord(0, 0, 1), Direction::East),
                 SwitchType::StraightRight90,
             ),
@@ -670,7 +684,7 @@ mod railroad_test {
         assert_eq!(
             route,
             Some((
-                3f64,
+                6,
                 vec![sensor5index, sensor3index, sensor1index, sensor4index]
             ))
         )

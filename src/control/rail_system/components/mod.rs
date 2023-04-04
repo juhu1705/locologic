@@ -1,21 +1,90 @@
 mod signal_checks;
+#[cfg(feature = "locodrive")]
+mod locodrive;
 
+use std::cmp::Ordering;
 use crate::control::rail_system::railroad::Railroad;
 use async_recursion::async_recursion;
-use locodrive::args::{AddressArg, SensorLevel, SwitchDirection};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::{VisitMap, Visitable};
 use std::collections::VecDeque;
 use std::ops;
-use std::ops::Index;
+use std::ops::{Index, Not};
+
+pub type DefaultIx = u16;
+
+#[derive(Debug, Copy, Clone, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Address<Ix = DefaultIx>(Ix);
+
+impl<Ix> Address<Ix>
+where
+    Ix: Copy,
+{
+    pub fn new(address: Ix) -> Self {
+        Address(address)
+    }
+
+    #[inline]
+    pub fn address(&self) -> Ix {
+        self.0
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum Speed<Spd = u8> {
+    /// Performs a normal stop. Trains may stop smoothly.
+    Stop,
+    /// Performs an immediate stop action. Trains do stop immediately.
+    EmergencyStop,
+    /// Sets the slots speed to a given value. If you want a slot speed to set to 0
+    /// use [`SpeedArg::Stop`] or create your [`SpeedArg`] using [`SpeedArg::new()`].
+    Drive(Spd),
+}
+
+impl<Spd> PartialOrd<Self> for Speed<Spd> where Spd: Ord {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<Spd> Ord for Speed<Spd>
+    where Spd: Ord
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        if *self == *other {
+            return Ordering::Equal
+        }
+
+        match self {
+            Speed::Stop => {
+                if *other == Speed::EmergencyStop {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
+            Speed::EmergencyStop => {
+                Ordering::Less
+            }
+            Speed::Drive(spd) => {
+                if let Speed::Drive(other) = other {
+                    spd.cmp(other)
+                } else {
+                    Ordering::Greater
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum Node {
-    Signal(AddressArg, Position),
-    Sensor(AddressArg, Position),
-    Switch(AddressArg, Position, SwitchType),
-    Station(AddressArg, Position),
-    Cross(AddressArg),
+    Signal(Address, Position),
+    Sensor(Address, Position),
+    Switch(Address, Position, SwitchType),
+    Station(Address, Position),
+    Cross(Address),
+    Buffer(Position),
 }
 
 impl Node {
@@ -32,6 +101,7 @@ impl Node {
                     Position::new(Coord(0, 0, 0), Direction::North)
                 }
             }
+            Node::Buffer(position) => *position,
         }
     }
 }
@@ -219,6 +289,10 @@ impl Coord {
         )
     }
 
+    pub fn manhattan_distance(&self, coord: &Coord) -> usize {
+        self.0.abs_diff(coord.0) + self.1.abs_diff(coord.1) + self.2.abs_diff(coord.2)
+    }
+
     pub fn fold(&self) -> usize {
         self.0 + self.1 + self.2
     }
@@ -373,6 +447,21 @@ impl Rail {
         }
     }
 
+    pub fn manhattan_distance(&self) -> usize {
+        match self.pos.dir {
+            Direction::North
+            | Direction::East
+            | Direction::South
+            | Direction::West
+            | Direction::Up
+            | Direction::Down => self.length,
+            Direction::Northeast
+            | Direction::Southeast
+            | Direction::Southwest
+            | Direction::Northwest => self.length * 2,
+        }
+    }
+
     pub fn pos(&self) -> Position {
         self.pos
     }
@@ -404,35 +493,52 @@ pub enum SwitchType {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum SwDir {
+    Straight,
+    Curved
+}
+
+impl Not for SwDir {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            SwDir::Straight => SwDir::Curved,
+            SwDir::Curved => SwDir::Straight
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Switch {
-    address: AddressArg,
-    dir: SwitchDirection,
+    address: Address,
+    dir: SwDir,
     updated: bool,
 }
 
 impl Switch {
-    pub fn new(address: AddressArg) -> Self {
+    pub fn new(address: Address) -> Self {
         Switch {
             address,
-            dir: SwitchDirection::Straight,
+            dir: SwDir::Straight,
             updated: false,
         }
     }
 
-    pub fn address(&self) -> AddressArg {
+    pub fn address(&self) -> Address {
         self.address
     }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Cross {
-    address: AddressArg,
+    address: Address,
     nodes: (NodeIndex, NodeIndex),
     pos: Position,
 }
 
 impl Cross {
-    pub fn new(address: AddressArg, pos: Position, nodes: (NodeIndex, NodeIndex)) -> Self {
+    pub fn new(address: Address, pos: Position, nodes: (NodeIndex, NodeIndex)) -> Self {
         Cross {
             address,
             nodes,
@@ -440,7 +546,7 @@ impl Cross {
         }
     }
 
-    pub fn address(&self) -> AddressArg {
+    pub fn address(&self) -> Address {
         self.address
     }
 }
@@ -472,39 +578,56 @@ impl ops::BitOr for Status {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum SLevel {
+    Occupied,
+    Free
+}
+
+impl Not for SLevel {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            SLevel::Occupied => SLevel::Free,
+            SLevel::Free => SLevel::Occupied
+        }
+    }
+}
+
 #[derive(Debug, Clone, Hash)]
 pub struct Sensor {
-    address: AddressArg,
+    address: Address,
     status: Status,
-    level: SensorLevel,
-    train: Option<AddressArg>,
-    max_speed: u8,
+    level: SLevel,
+    train: Option<Address>,
+    max_speed: Speed,
 }
 
 impl Sensor {
-    pub fn new(adr: AddressArg) -> Sensor {
+    pub fn new(adr: Address, max_speed: Speed) -> Sensor {
         Sensor {
             address: adr,
             status: Status::Free,
-            level: SensorLevel::Low,
+            level: SLevel::Free,
             train: None,
-            max_speed: 128u8,
+            max_speed,
         }
     }
 
-    pub fn address(&self) -> AddressArg {
+    pub fn address(&self) -> Address {
         self.address
     }
 
-    pub fn max_speed(&self) -> u8 {
+    pub fn max_speed(&self) -> Speed {
         self.max_speed
     }
 
-    pub fn train(&self) -> &Option<AddressArg> {
+    pub fn train(&self) -> &Option<Address> {
         &self.train
     }
 
-    pub fn block(&mut self, train: AddressArg) -> bool {
+    pub fn block(&mut self, train: Address) -> bool {
         if let Some(t) = self.train {
             t == train
         } else {
@@ -514,11 +637,11 @@ impl Sensor {
         }
     }
 
-    pub fn free(&mut self, train: AddressArg) {
+    pub fn free(&mut self, train: Address) {
         if let Some(t) = self.train {
             if t == train {
                 self.train = None;
-                self.status = if self.level == SensorLevel::Low {
+                self.status = if self.level == SLevel::Free {
                     Status::Free
                 } else {
                     Status::Occupied
@@ -534,25 +657,25 @@ impl Sensor {
 
 #[derive(Debug, Clone)]
 pub enum SignalType {
-    Block(Vec<AddressArg>),
+    Block(Vec<Address>),
     Path,
     IntelligentPath,
 }
 
 #[derive(Debug, Clone)]
 pub struct Signal {
-    address: AddressArg,
+    address: Address,
     representing_node: NodeIndex,
     sig_type: SignalType,
     status: Status,
-    trains: Vec<AddressArg>,
-    requesters: VecDeque<AddressArg>,
-    other_input_signals: Vec<AddressArg>,
+    trains: Vec<Address>,
+    requesters: VecDeque<Address>,
+    other_input_signals: Vec<Address>,
     is_calculating: bool,
 }
 
 impl Signal {
-    pub fn new(address: AddressArg, sig_type: SignalType, representing_node: NodeIndex) -> Self {
+    pub fn new(address: Address, sig_type: SignalType, representing_node: NodeIndex) -> Self {
         Signal {
             address,
             representing_node,
@@ -577,7 +700,7 @@ impl Signal {
         self.other_input_signals = signals;
     }
 
-    pub async fn request_block(&mut self, train: AddressArg) {
+    pub async fn request_block(&mut self, train: Address) {
         self.requesters.push_back(train);
     }
 
@@ -611,7 +734,7 @@ impl Signal {
         self.is_calculating = false;
     }
 
-    pub fn address(&self) -> AddressArg {
+    pub fn address(&self) -> Address {
         self.address
     }
 

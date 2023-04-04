@@ -37,7 +37,7 @@ async fn handle_successor(
     railroad: &Railroad,
     discovered: &mut FixedBitSet,
     signal: &NodeIndex,
-    in_signals: &mut Vec<AddressArg>,
+    in_signals: &mut Vec<Address>,
 ) {
     if discovered.visit(succ) {
         return;
@@ -65,7 +65,7 @@ async fn search_node_neighbours(
     railroad: &Railroad,
     discovered: &mut FixedBitSet,
     signal: &NodeIndex,
-    in_signals: &mut Vec<AddressArg>,
+    in_signals: &mut Vec<Address>,
 ) -> Option<NodeIndex> {
     let node = stack.pop_front()?;
     for succ in graph.neighbors_undirected(node) {
@@ -87,7 +87,7 @@ impl Signal {
     pub(super) async fn search_block(
         signal: &NodeIndex,
         railroad: &Railroad,
-    ) -> (Vec<AddressArg>, Vec<AddressArg>) {
+    ) -> (Vec<Address>, Vec<Address>) {
         let graph = railroad.road().await;
         let mut signal_walker = graph.neighbors(*signal).detach();
         let mut sensors = vec![];
@@ -115,7 +115,7 @@ impl Signal {
         (in_signals, sensors)
     }
 
-    pub(super) async fn drive(&mut self, railroad: &Railroad) -> Option<Vec<AddressArg>> {
+    pub(super) async fn drive(&mut self, railroad: &Railroad) -> Option<Vec<Address>> {
         if self.status != Status::Free {
             return None;
         }
@@ -126,7 +126,7 @@ impl Signal {
         }
     }
 
-    async fn path_behaviour(&self, railroad: &Railroad) -> Option<Vec<AddressArg>> {
+    async fn path_behaviour(&self, railroad: &Railroad) -> Option<Vec<Address>> {
         let first = &self.requesters.front()?;
         let train = railroad.get_train(first)?.lock().await.clone();
         let route = train.request_route(self.address, railroad).await?;
@@ -135,7 +135,7 @@ impl Signal {
         }
 
         let road = railroad.road().await;
-        let adr_route: Vec<AddressArg> = route
+        let adr_route: Vec<Address> = route
             .iter()
             .filter_map(|index| {
                 let node = road.node_weight(**index)?;
@@ -150,9 +150,9 @@ impl Signal {
 
     async fn block_behaviour(
         &self,
-        sensors: &[AddressArg],
+        sensors: &[Address],
         railroad: &Railroad,
-    ) -> Option<Vec<AddressArg>> {
+    ) -> Option<Vec<Address>> {
         for sensor in sensors {
             if let Some(sensor) = railroad.get_sensor_mutex(sensor) {
                 if !matches!(

@@ -1,6 +1,5 @@
-use crate::control::rail_system::components::{Node, Signal};
+use crate::control::rail_system::components::{Address, Node, Signal, Speed};
 use crate::control::rail_system::railroad::Railroad;
-use locodrive::args::{AddressArg, SlotArg, SpeedArg};
 use petgraph::graph::NodeIndex;
 use std::time::Duration;
 
@@ -12,15 +11,13 @@ pub struct Clock {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 /// Represents one train
 pub struct Train {
-    /// The TRAINS address
-    address: AddressArg,
-    /// The TRAINS slot
-    slot: SlotArg,
-    /// The TRAINS current speed
-    actual_speed: SpeedArg,
+    /// The TRAIN'S address
+    address: Address,
+    /// The TRAIN'S current speed
+    actual_speed: Speed,
     /// The speed the train should read
-    speed: SpeedArg,
-    /// The trains position
+    speed: Speed,
+    /// The train's position
     position: NodeIndex,
     /// Controls the driving process
     route: Option<Vec<NodeIndex>>,
@@ -29,12 +26,11 @@ pub struct Train {
 }
 
 impl Train {
-    pub fn new(address: AddressArg, slot: SlotArg, position: NodeIndex) -> Self {
+    pub fn new(address: Address, position: NodeIndex) -> Self {
         Train {
             address,
-            slot,
-            actual_speed: SpeedArg::Stop,
-            speed: SpeedArg::Stop,
+            actual_speed: Speed::Stop,
+            speed: Speed::Stop,
             position,
             route: None,
             timetable: Vec::new(),
@@ -42,16 +38,16 @@ impl Train {
     }
 
     pub fn stands(&self) -> bool {
-        self.speed == SpeedArg::Stop || self.speed == SpeedArg::EmergencyStop
+        self.speed == Speed::Stop || self.speed == Speed::EmergencyStop
     }
 
-    pub fn address(&self) -> AddressArg {
+    pub fn address(&self) -> Address {
         self.address
     }
 
     pub async fn request_route(
         &self,
-        signal: AddressArg,
+        signal: Address,
         railroad: &Railroad,
     ) -> Option<Vec<&NodeIndex>> {
         let route = self.route.as_ref()?;
@@ -75,7 +71,7 @@ impl Train {
         Some(vec)
     }
 
-    pub async fn notify(&mut self, _signal: &Signal, road: Vec<AddressArg>, railroad: &Railroad) {
+    pub async fn notify(&mut self, _signal: &Signal, road: Vec<Address>, railroad: &Railroad) {
         for adr in road {
             if let Some(mutex) = railroad.get_sensor_mutex(&adr) {
                 let mut sensor = mutex.lock().await;
