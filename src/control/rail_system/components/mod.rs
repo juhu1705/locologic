@@ -1,15 +1,17 @@
-mod signal_checks;
 #[cfg(feature = "locodrive")]
 mod locodrive;
+mod signal_checks;
 
-use std::cmp::Ordering;
 use crate::control::rail_system::railroad::Railroad;
 use async_recursion::async_recursion;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::{VisitMap, Visitable};
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::ops;
 use std::ops::{Index, Not};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub type DefaultIx = u16;
 
@@ -41,18 +43,22 @@ pub enum Speed<Spd = u8> {
     Drive(Spd),
 }
 
-impl<Spd> PartialOrd<Self> for Speed<Spd> where Spd: Ord {
+impl<Spd> PartialOrd<Self> for Speed<Spd>
+where
+    Spd: Ord,
+{
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl<Spd> Ord for Speed<Spd>
-    where Spd: Ord
+where
+    Spd: Ord,
 {
     fn cmp(&self, other: &Self) -> Ordering {
         if *self == *other {
-            return Ordering::Equal
+            return Ordering::Equal;
         }
 
         match self {
@@ -63,9 +69,7 @@ impl<Spd> Ord for Speed<Spd>
                     Ordering::Less
                 }
             }
-            Speed::EmergencyStop => {
-                Ordering::Less
-            }
+            Speed::EmergencyStop => Ordering::Less,
             Speed::Drive(spd) => {
                 if let Speed::Drive(other) = other {
                     spd.cmp(other)
@@ -495,7 +499,7 @@ pub enum SwitchType {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SwDir {
     Straight,
-    Curved
+    Curved,
 }
 
 impl Not for SwDir {
@@ -504,7 +508,7 @@ impl Not for SwDir {
     fn not(self) -> Self::Output {
         match self {
             SwDir::Straight => SwDir::Curved,
-            SwDir::Curved => SwDir::Straight
+            SwDir::Curved => SwDir::Straight,
         }
     }
 }
@@ -581,7 +585,7 @@ impl ops::BitOr for Status {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SLevel {
     Occupied,
-    Free
+    Free,
 }
 
 impl Not for SLevel {
@@ -590,7 +594,7 @@ impl Not for SLevel {
     fn not(self) -> Self::Output {
         match self {
             SLevel::Occupied => SLevel::Free,
-            SLevel::Free => SLevel::Occupied
+            SLevel::Free => SLevel::Occupied,
         }
     }
 }
@@ -657,7 +661,7 @@ impl Sensor {
 
 #[derive(Debug, Clone)]
 pub enum SignalType {
-    Block(Vec<Address>),
+    Block,
     Path,
     IntelligentPath,
 }
@@ -671,7 +675,8 @@ pub struct Signal {
     trains: Vec<Address>,
     requesters: VecDeque<Address>,
     other_input_signals: Vec<Address>,
-    is_calculating: bool,
+    block_sensors: Vec<Address>,
+    calculation_group: Arc<Mutex<Address>>,
 }
 
 impl Signal {
@@ -684,7 +689,8 @@ impl Signal {
             trains: vec![],
             requesters: VecDeque::new(),
             other_input_signals: vec![],
-            is_calculating: false,
+            block_sensors: vec![],
+            calculation_group: Arc::new(Mutex::new(address)),
         }
     }
 
@@ -692,11 +698,26 @@ impl Signal {
         self.representing_node
     }
 
+    async fn reset_group(&mut self, signal: &Address, railroad: &Railroad) {
+        self.calculation_group = railroad
+            .get_signal_mutex(signal)
+            .unwrap()
+            .lock()
+            .await
+            .calculation_group
+            .clone();
+    }
+
     pub async fn initialize(&mut self, railroad: &Railroad) {
         let (signals, sensors) = Signal::search_block(&self.representing_node, railroad).await;
-        if matches!(&self.sig_type, SignalType::Block(_)) {
-            self.sig_type = SignalType::Block(sensors);
+        self.block_sensors = sensors;
+
+        if let Some(min_sig) = signals.iter().min() {
+            if *min_sig < self.address {
+                self.reset_group(min_sig, railroad).await;
+            }
         }
+
         self.other_input_signals = signals;
     }
 
@@ -709,29 +730,23 @@ impl Signal {
             return;
         }
 
-        for adr in &self.other_input_signals {
-            if let Some(mutex) = railroad.get_signal_mutex(adr) {
-                let signal = mutex.lock().await;
-                if signal.is_calculating {
-                    return;
-                }
-            }
-        }
-
-        self.is_calculating = true;
+        let cloned = self.calculation_group.clone();
+        let _calculate = cloned.lock().await;
         if let Some(free_road) = self.drive(railroad).await {
+            if !self.requesters.is_empty() {
+                return;
+            }
             let train = self.requesters.pop_front().unwrap();
             self.status = Status::Reserved;
             self.trains.push(train);
-            railroad
-                .get_train(&train)
-                .unwrap()
-                .lock()
-                .await
-                .notify(self, free_road, railroad)
-                .await;
+
+            for adr in free_road {
+                if let Some(mutex) = railroad.get_sensor_mutex(&adr) {
+                    let mut sensor = mutex.lock().await;
+                    sensor.block(self.address());
+                }
+            }
         }
-        self.is_calculating = false;
     }
 
     pub fn address(&self) -> Address {

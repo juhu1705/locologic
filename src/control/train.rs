@@ -45,7 +45,7 @@ impl Train {
         self.address
     }
 
-    pub async fn request_route(
+    pub(crate) async fn request_route(
         &self,
         signal: Address,
         railroad: &Railroad,
@@ -69,15 +69,6 @@ impl Train {
 
         let vec: Vec<&NodeIndex> = route[index..end].iter().clone().collect();
         Some(vec)
-    }
-
-    pub async fn notify(&mut self, _signal: &Signal, road: Vec<Address>, railroad: &Railroad) {
-        for adr in road {
-            if let Some(mutex) = railroad.get_sensor_mutex(&adr) {
-                let mut sensor = mutex.lock().await;
-                sensor.block(self.address());
-            }
-        }
     }
 
     pub async fn update(&mut self, _tick: Duration, _railroad: &Railroad) {}

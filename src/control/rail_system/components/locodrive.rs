@@ -1,5 +1,5 @@
-use locodrive::args::{AddressArg, SpeedArg};
 use crate::control::rail_system::components::{Address, Speed};
+use locodrive::args::{AddressArg, SpeedArg};
 
 impl Address<u16> {
     pub fn address_arg(&self) -> AddressArg {
@@ -16,7 +16,7 @@ impl Speed<u8> {
         match *self {
             Speed::Stop => SpeedArg::Stop,
             Speed::EmergencyStop => SpeedArg::EmergencyStop,
-            Speed::Drive(spd) => SpeedArg::Drive(spd)
+            Speed::Drive(spd) => SpeedArg::Drive(spd),
         }
     }
 
@@ -24,7 +24,7 @@ impl Speed<u8> {
         match *spd {
             SpeedArg::Stop => Speed::Stop,
             SpeedArg::EmergencyStop => Speed::EmergencyStop,
-            SpeedArg::Drive(spd) => Speed::Drive(spd)
+            SpeedArg::Drive(spd) => Speed::Drive(spd),
         }
     }
 }

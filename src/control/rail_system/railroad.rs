@@ -1,4 +1,6 @@
-use crate::control::rail_system::components::{Address, Cross, Node, Position, Rail, Sensor, Signal, SignalType, Speed, Switch, SwitchType};
+use crate::control::rail_system::components::{
+    Address, Cross, Node, Position, Rail, Sensor, Signal, SignalType, Speed, Switch, SwitchType,
+};
 use crate::control::train::Train;
 use petgraph::algo::astar;
 use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex};
@@ -186,14 +188,22 @@ impl Builder {
         self.trains.insert(train.address(), train);
     }
 
-    pub fn add_sensors(&mut self, sensors: Vec<(Address, Speed, Position)>) -> Vec<(NodeIndex, Address)> {
+    pub fn add_sensors(
+        &mut self,
+        sensors: Vec<(Address, Speed, Position)>,
+    ) -> Vec<(NodeIndex, Address)> {
         sensors
             .iter()
             .map(|(s_adr, max_speed, s_pos)| (self.add_sensor(*s_adr, *max_speed, *s_pos), *s_adr))
             .collect()
     }
 
-    pub fn add_sensor(&mut self, sensor: Address, max_speed: Speed, position: Position) -> NodeIndex {
+    pub fn add_sensor(
+        &mut self,
+        sensor: Address,
+        max_speed: Speed,
+        position: Position,
+    ) -> NodeIndex {
         let node = self.road.add_node(Node::Sensor(sensor, position));
 
         if let Some((_, vector)) = self.sensors.get_mut(&sensor) {
@@ -216,7 +226,12 @@ impl Builder {
             .collect()
     }
 
-    pub fn add_station(&mut self, station: Address, max_speed: Speed, position: Position) -> NodeIndex {
+    pub fn add_station(
+        &mut self,
+        station: Address,
+        max_speed: Speed,
+        position: Position,
+    ) -> NodeIndex {
         let index = self.road.add_node(Node::Station(station, position));
 
         if let Some((_, vector)) = self.sensors.get_mut(&station) {
@@ -414,7 +429,9 @@ impl Builder {
 
 #[cfg(test)]
 mod railroad_test {
-    use crate::control::rail_system::components::{Address, Coord, Direction, Position, Speed, SwitchType};
+    use crate::control::rail_system::components::{
+        Address, Coord, Direction, Position, SignalType, Speed, SwitchType,
+    };
     use crate::control::rail_system::railroad::{Builder, Railroad};
     use petgraph::graph::NodeIndex;
     use std::sync::Arc;
@@ -638,7 +655,11 @@ mod railroad_test {
             ),
         ]);
 
-        builder.add_signals(vec![]);
+        builder.add_signals(vec![(
+            Address::new(0),
+            SignalType::Block,
+            Position::new(Coord(0, 0, 0), Direction::East),
+        )]);
 
         builder.connect(sensors[5].0, sensors[3].0, vec![]);
         builder.connect(sensors[3].0, sensors[1].0, vec![]);

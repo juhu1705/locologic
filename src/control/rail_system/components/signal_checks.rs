@@ -121,8 +121,14 @@ impl Signal {
         }
 
         match &self.sig_type {
-            SignalType::Block(sensors) => self.block_behaviour(sensors, railroad).await,
-            SignalType::Path | SignalType::IntelligentPath => self.path_behaviour(railroad).await,
+            SignalType::Block => self.block_behaviour(&self.block_sensors, railroad).await,
+            SignalType::Path | SignalType::IntelligentPath => {
+                if let Some(path) = self.path_behaviour(railroad).await {
+                    Some(path)
+                } else {
+                    self.block_behaviour(&self.block_sensors, railroad).await
+                }
+            }
         }
     }
 
