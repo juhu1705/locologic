@@ -198,6 +198,16 @@ impl Builder {
             .collect()
     }
 
+    pub fn add_bidirectional_sensors(
+        &mut self,
+        sensors: Vec<(Address, Speed, Position)>,
+    ) -> Vec<((NodeIndex, NodeIndex), Address)> {
+        sensors
+            .iter()
+            .map(|(s_adr, max_speed, s_pos)| (self.add_bidirectional_sensor(*s_adr, *max_speed, *s_pos), *s_adr))
+            .collect()
+    }
+
     pub fn add_sensor(
         &mut self,
         sensor: Address,
@@ -214,6 +224,26 @@ impl Builder {
         }
 
         node
+    }
+
+    pub fn add_bidirectional_sensor(
+        &mut self,
+        sensor: Address,
+        max_speed: Speed,
+        position: Position,
+    ) -> (NodeIndex, NodeIndex) {
+        let node = self.road.add_node(Node::Sensor(sensor, position));
+        let node_reverse = self.road.add_node(Node::Sensor(sensor, position));
+
+        if let Some((_, vector)) = self.sensors.get_mut(&sensor) {
+            vector.push(node);
+            vector.push(node_reverse)
+        } else {
+            self.sensors
+                .insert(sensor, (Sensor::new(sensor, max_speed), vec![node, node_reverse]));
+        }
+
+        (node, node_reverse)
     }
 
     pub fn add_stations(
@@ -299,6 +329,16 @@ impl Builder {
             .collect()
     }
 
+    pub fn add_bidirectional_switches(
+        &mut self,
+        switches: Vec<(Address, Position, SwitchType)>,
+    ) -> Vec<((NodeIndex, NodeIndex), Address)> {
+        switches
+            .into_iter()
+            .map(|switch| (self.add_bidirectional_switch(switch.0, switch.1, switch.2), switch.0))
+            .collect()
+    }
+
     pub fn add_switch(
         &mut self,
         switch: Address,
@@ -308,13 +348,33 @@ impl Builder {
         let index = self.road.add_node(Node::Switch(switch, position, s_type));
 
         if let Some((_, vector)) = self.switches.get_mut(&switch) {
-            vector.push(index)
+            vector.push(index);
         } else {
             self.switches
                 .insert(switch, (Switch::new(switch), vec![index]));
         }
 
         index
+    }
+
+    pub fn add_bidirectional_switch(
+        &mut self,
+        switch: Address,
+        position: Position,
+        s_type: SwitchType,
+    ) -> (NodeIndex, NodeIndex) {
+        let index = self.road.add_node(Node::Switch(switch, position, s_type));
+        let index_reverse = self.road.add_node(Node::Switch(switch, position, s_type));
+
+        if let Some((_, vector)) = self.switches.get_mut(&switch) {
+            vector.push(index);
+            vector.push(index_reverse)
+        } else {
+            self.switches
+                .insert(switch, (Switch::new(switch), vec![index, index_reverse]));
+        }
+
+        (index, index_reverse)
     }
 
     pub fn remove_train(&mut self, adr: &Address) {
@@ -376,6 +436,26 @@ impl Builder {
             && self.can_add_neighbour(to, Direction::Incoming)?
         {
             Some(self.road.update_edge(from, to, rail))
+        } else {
+            None
+        }
+    }
+
+    pub fn connect_bidirectional(
+        &mut self,
+        from: (NodeIndex, NodeIndex),
+        to: (NodeIndex, NodeIndex),
+        rail: Vec<Rail>,
+    ) -> Option<(EdgeIndex, EdgeIndex)> {
+        if self.can_add_neighbour(from.0, Direction::Outgoing)?
+            && self.can_add_neighbour(to.0, Direction::Incoming)?
+            && self.can_add_neighbour(from.1, Direction::Outgoing)?
+            && self.can_add_neighbour(to.1, Direction::Incoming)?
+        {
+            Some((
+                self.road.update_edge(from.0, to.0, rail.clone()),
+                self.road.update_edge(from.1, to.1, rail)
+            ))
         } else {
             None
         }
@@ -448,218 +528,241 @@ mod railroad_test {
             (
                 Address::new(0),
                 Speed::Drive(128),
-                Position::new(Coord(0, 0, 0), Direction::East),
+                Position::new(Coord(6, 9, 0), Direction::South),
             ),
             (
                 Address::new(1),
                 Speed::Drive(128),
-                Position::new(Coord(30, 30, 0), Direction::East),
-            ),
-            (
-                Address::new(2),
-                Speed::Drive(128),
-                Position::new(Coord(50, 50, 1), Direction::East),
-            ),
-            (
-                Address::new(3),
-                Speed::Drive(128),
-                Position::new(Coord(20, 20, 1), Direction::East),
-            ),
-            (
-                Address::new(4),
-                Speed::Drive(128),
-                Position::new(Coord(100, 100, 1), Direction::East),
-            ),
-            (
-                Address::new(5),
-                Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
-            ),
-            (
-                Address::new(6),
-                Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
-            ),
-            (
-                Address::new(7),
-                Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(2, 9, 0), Direction::West),
             ),
             (
                 Address::new(8),
                 Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(5, 13, 0), Direction::North),
             ),
             (
                 Address::new(9),
                 Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(5, 14, 0), Direction::North),
             ),
             (
                 Address::new(10),
                 Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(5, 15, 0), Direction::North),
             ),
             (
                 Address::new(11),
                 Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(5, 18, 0), Direction::North),
             ),
             (
                 Address::new(12),
                 Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
-            ),
-            (
-                Address::new(13),
-                Speed::Drive(128),
-                Position::new(Coord(0, 0, 0), Direction::East),
-            ),
-            (
-                Address::new(14),
-                Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
-            ),
-            (
-                Address::new(15),
-                Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
-            ),
-            (
-                Address::new(16),
-                Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
-            ),
-            (
-                Address::new(17),
-                Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
-            ),
-            (
-                Address::new(18),
-                Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(5, 16, 0), Direction::North),
             ),
             (
                 Address::new(19),
                 Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(2, 11, 0), Direction::West),
+            )
+        ]);
+
+        let _bidirectional_sensors = builder.add_bidirectional_sensors(vec![
+            (
+                Address::new(2),
+                Speed::Drive(128),
+                Position::new(Coord(8, 8, 1), Direction::West),
             ),
             (
-                Address::new(20),
+                Address::new(3),
                 Speed::Drive(128),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(10, 2, 1), Direction::West),
+            ),
+            (
+                Address::new(4),
+                Speed::Drive(128),
+                Position::new(Coord(8, 3, 1), Direction::West),
+            ),
+            (
+                Address::new(5),
+                Speed::Drive(128),
+                Position::new(Coord(1, 4, 1), Direction::West),
+            ),
+            (
+                Address::new(6),
+                Speed::Drive(128),
+                Position::new(Coord(5, 18, 1), Direction::North),
+            ),
+            (
+                Address::new(7),
+                Speed::Drive(128),
+                Position::new(Coord(5, 16, 1), Direction::North),
+            ),
+            (
+                Address::new(13),
+                Speed::Drive(128),
+                Position::new(Coord(5, 6, 1), Direction::Southwest),
+            ),
+            (
+                Address::new(14),
+                Speed::Drive(128),
+                Position::new(Coord(10, 4, 1), Direction::West),
+            ),
+            (
+                Address::new(14),
+                Speed::Drive(128),
+                Position::new(Coord(10, 12, 1), Direction::West),
+            ),
+            (
+                Address::new(15),
+                Speed::Drive(128),
+                Position::new(Coord(7, 3, 1), Direction::West),
+            ),
+            (
+                Address::new(16),
+                Speed::Drive(128),
+                Position::new(Coord(7, 9, 2), Direction::West),
+            ),
+            (
+                Address::new(17),
+                Speed::Drive(128),
+                Position::new(Coord(7, 12, 2), Direction::West),
+            ),
+            (
+                Address::new(18),
+                Speed::Drive(128),
+                Position::new(Coord(7, 15, 2), Direction::West),
             ),
         ]);
 
         let switches = builder.add_switches(vec![
             (
-                Address::new(0),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
                 Address::new(1),
-                Position::new(Coord(0, 0, 0), Direction::East),
+                Position::new(Coord(2, 12, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
                 Address::new(2),
-                Position::new(Coord(0, 0, 0), Direction::East),
+                Position::new(Coord(2, 13, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
             (
                 Address::new(3),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
+                Position::new(Coord(2, 15, 0), Direction::East),
+                SwitchType::StraightRight180,
             ),
             (
                 Address::new(4),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
+                Position::new(Coord(2, 16, 0), Direction::East),
+                SwitchType::StraightRight180,
             ),
             (
                 Address::new(5),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
+                Position::new(Coord(8, 16, 0), Direction::Northeast),
+                SwitchType::StraightLeft90,
             ),
             (
                 Address::new(6),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
+                Position::new(Coord(9, 13, 0), Direction::East),
+                SwitchType::StraightLeft90,
             ),
             (
                 Address::new(7),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
+                Position::new(Coord(9, 12, 0), Direction::East),
+                SwitchType::StraightLeft90,
             ),
             (
                 Address::new(8),
-                Position::new(Coord(0, 0, 1), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(9),
-                Position::new(Coord(0, 0, 1), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(10),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(11),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(12),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(13),
-                Position::new(Coord(0, 0, 0), Direction::East),
-                SwitchType::StraightRight90,
+                Position::new(Coord(8, 10, 0), Direction::Southeast),
+                SwitchType::StraightLeft90,
             ),
             (
                 Address::new(14),
-                Position::new(Coord(0, 0, 1), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(15),
-                Position::new(Coord(0, 0, 1), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(16),
-                Position::new(Coord(0, 0, 1), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(17),
-                Position::new(Coord(0, 0, 1), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(18),
-                Position::new(Coord(0, 0, 1), Direction::East),
-                SwitchType::StraightRight90,
-            ),
-            (
-                Address::new(19),
-                Position::new(Coord(0, 0, 1), Direction::East),
+                Position::new(Coord(4, 8, 0), Direction::East),
                 SwitchType::StraightRight90,
             ),
         ]);
 
-        builder.add_signals(vec![(
-            Address::new(0),
-            SignalType::Block,
-            Position::new(Coord(0, 0, 0), Direction::East),
-        )]);
+        let _bidirectional_switches = builder.add_bidirectional_switches(vec![
+            (
+                Address::new(9),
+                Position::new(Coord(3, 15, 1), Direction::East),
+                SwitchType::StraightLeft90,
+            ),
+            (
+                Address::new(10),
+                Position::new(Coord(7, 0, 1), Direction::South),
+                SwitchType::StraightLeft90,
+            ),
+            (
+                Address::new(11),
+                Position::new(Coord(2, 6, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                Address::new(12),
+                Position::new(Coord(2, 5, 0), Direction::West),
+                SwitchType::StraightRight90,
+            ),
+            (
+                Address::new(13),
+                Position::new(Coord(4, 6, 0), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                Address::new(15),
+                Position::new(Coord(8, 6, 1), Direction::West),
+                SwitchType::StraightRight90,
+            ),
+            (
+                Address::new(16),
+                Position::new(Coord(8, 10, 1), Direction::East),
+                SwitchType::StraightLeft90,
+            ),
+            (
+                Address::new(17),
+                Position::new(Coord(8, 7, 1), Direction::West),
+                SwitchType::StraightRight90,
+            ),
+            (
+                Address::new(17),
+                Position::new(Coord(10, 5, 1), Direction::East),
+                SwitchType::StraightLeft90,
+            ),
+            (
+                Address::new(18),
+                Position::new(Coord(8, 9, 1), Direction::East),
+                SwitchType::StraightLeft90,
+            ),
+            (
+                Address::new(18),
+                Position::new(Coord(10, 11, 1), Direction::West),
+                SwitchType::StraightRight90,
+            ),
+            (
+                Address::new(19),
+                Position::new(Coord(1, 12, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+            (
+                Address::new(20),
+                Position::new(Coord(3, 8, 1), Direction::East),
+                SwitchType::StraightRight90,
+            ),
+        ]);
+
+        builder.add_signals(vec![
+            (
+                Address::new(80),
+                SignalType::Block,
+                Position::new(Coord(0, 0, 0), Direction::East),
+            ),
+            (
+                Address::new(81),
+                SignalType::Block,
+                Position::new(Coord(0, 0, 0), Direction::Down)
+            ),
+        ]);
 
         builder.connect(sensors[5].0, sensors[3].0, vec![]);
         builder.connect(sensors[3].0, sensors[1].0, vec![]);
@@ -676,22 +779,22 @@ mod railroad_test {
 
         let sensor5index = sensors
             .iter()
-            .find(|(_, address)| address.address() == 5)
+            .find(|(_, address)| address.address() == 11)
             .unwrap()
             .0;
         let sensor4index = sensors
             .iter()
-            .find(|(_, address)| address.address() == 4)
+            .find(|(_, address)| address.address() == 10)
             .unwrap()
             .0;
         let sensor3index = sensors
             .iter()
-            .find(|(_, address)| address.address() == 3)
+            .find(|(_, address)| address.address() == 9)
             .unwrap()
             .0;
         let _sensor2index = sensors
             .iter()
-            .find(|(_, address)| address.address() == 2)
+            .find(|(_, address)| address.address() == 8)
             .unwrap()
             .0;
         let sensor1index = sensors

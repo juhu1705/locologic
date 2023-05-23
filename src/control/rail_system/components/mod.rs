@@ -125,6 +125,25 @@ pub enum Direction {
     Down = 9,
 }
 
+impl Not for Direction {
+    type Output = Direction;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Direction::North => Direction::South,
+            Direction::Northeast => Direction::Southwest,
+            Direction::East => Direction::West,
+            Direction::Southeast => Direction::Northwest,
+            Direction::South => Direction::North,
+            Direction::Southwest => Direction::Northeast,
+            Direction::West => Direction::East,
+            Direction::Northwest => Direction::Southeast,
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+        }
+    }
+}
+
 impl From<u8> for Direction {
     fn from(dir_num: u8) -> Direction {
         match dir_num % 10 {

@@ -1,4 +1,4 @@
-use crate::control::rail_system::components::{Address, Node, Signal, Speed};
+use crate::control::rail_system::components::{Address, Node, Speed};
 use crate::control::rail_system::railroad::Railroad;
 use petgraph::graph::NodeIndex;
 use std::time::Duration;
