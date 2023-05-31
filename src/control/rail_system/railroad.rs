@@ -509,9 +509,7 @@ impl Builder {
 
 #[cfg(test)]
 mod railroad_test {
-    use crate::control::rail_system::components::{
-        Address, Coord, Direction, Position, SignalType, Speed, SwitchType,
-    };
+    use crate::control::rail_system::components::{Address, Coord, Direction, Position, Rail, SignalType, Speed, SwitchType};
     use crate::control::rail_system::railroad::{Builder, Railroad};
     use petgraph::graph::NodeIndex;
     use std::sync::Arc;
@@ -520,7 +518,9 @@ mod railroad_test {
     pub async fn create_test_railroad() -> (
         Railroad,
         Vec<(NodeIndex, Address)>,
+        Vec<((NodeIndex, NodeIndex), Address)>,
         Vec<(NodeIndex, Address)>,
+        Vec<((NodeIndex, NodeIndex), Address)>
     ) {
         let mut builder = Builder::new();
 
@@ -567,7 +567,7 @@ mod railroad_test {
             )
         ]);
 
-        let _bidirectional_sensors = builder.add_bidirectional_sensors(vec![
+        let bidirectional_sensors = builder.add_bidirectional_sensors(vec![
             (
                 Address::new(2),
                 Speed::Drive(128),
@@ -683,7 +683,7 @@ mod railroad_test {
             ),
         ]);
 
-        let _bidirectional_switches = builder.add_bidirectional_switches(vec![
+        let bidirectional_switches = builder.add_bidirectional_switches(vec![
             (
                 Address::new(9),
                 Position::new(Coord(3, 15, 1), Direction::East),
@@ -751,29 +751,270 @@ mod railroad_test {
             ),
         ]);
 
-        builder.add_signals(vec![
+        let signals = builder.add_signals(vec![
             (
                 Address::new(80),
-                SignalType::Block,
-                Position::new(Coord(0, 0, 0), Direction::East),
+                SignalType::Path,
+                Position::new(Coord(2, 10, 0), Direction::West),
             ),
             (
                 Address::new(81),
                 SignalType::Block,
-                Position::new(Coord(0, 0, 0), Direction::Down)
+                Position::new(Coord(3, 7, 0), Direction::Southeast)
             ),
+            (
+                Address::new(82),
+                SignalType::Block,
+                Position::new(Coord(4, 7, 0), Direction::East)
+            ),
+            (
+                Address::new(83),
+                SignalType::Path,
+                Position::new(Coord(5, 6, 0), Direction::North)
+            ),
+            (
+                Address::new(84),
+                SignalType::Block,
+                Position::new(Coord(4, 13, 0), Direction::North)
+            ),
+            (
+                Address::new(85),
+                SignalType::Block,
+                Position::new(Coord(4, 14, 0), Direction::North)
+            ),
+            (
+                Address::new(86),
+                SignalType::Block,
+                Position::new(Coord(4, 15, 0), Direction::North)
+            ),
+            (
+                Address::new(87),
+                SignalType::Block,
+                Position::new(Coord(4, 16, 0), Direction::North)
+            ),
+            (
+                Address::new(88),
+                SignalType::Block,
+                Position::new(Coord(4, 18, 0), Direction::North)
+            ),
+            (
+                Address::new(89),
+                SignalType::Block,
+                Position::new(Coord(7, 12, 0), Direction::Northeast)
+            ),
+            (
+                Address::new(90),
+                SignalType::Block,
+                Position::new(Coord(8, 13, 0), Direction::Northeast)
+            ),
+            (
+                Address::new(91),
+                SignalType::Block,
+                Position::new(Coord(8, 14, 0), Direction::Northeast)
+            ),
+            (
+                Address::new(92),
+                SignalType::Block,
+                Position::new(Coord(7, 16, 0), Direction::North)
+            ),
+            (
+                Address::new(93),
+                SignalType::Block,
+                Position::new(Coord(7, 17, 0), Direction::Northeast)
+            ),
+            (
+                Address::new(94),
+                SignalType::Block,
+                Position::new(Coord(8, 0, 1), Direction::South)
+            ),
+            (
+                Address::new(95),
+                SignalType::Path,
+                Position::new(Coord(8, 0, 1), Direction::North)
+            ),
+            (
+                Address::new(96),
+                SignalType::Path,
+                Position::new(Coord(8, 2, 1), Direction::West)
+            ),
+            (
+                Address::new(97),
+                SignalType::Block,
+                Position::new(Coord(8, 2, 1), Direction::East)
+            ),
+            (
+                Address::new(98),
+                SignalType::Block,
+                Position::new(Coord(10, 3, 1), Direction::West)
+            ),
+            (
+                Address::new(99),
+                SignalType::Path,
+                Position::new(Coord(10, 3, 1), Direction::East)
+            ),
+            (
+                Address::new(100),
+                SignalType::Path,
+                Position::new(Coord(7, 4, 1), Direction::West)
+            ),
+            (
+                Address::new(101),
+                SignalType::Block,
+                Position::new(Coord(7, 4, 1), Direction::East)
+            ),
+            (
+                Address::new(102),
+                SignalType::Block,
+                Position::new(Coord(8, 5, 1), Direction::West)
+            ),
+            (
+                Address::new(103),
+                SignalType::Path,
+                Position::new(Coord(8, 5, 1), Direction::East)
+            ),
+            (
+                Address::new(104),
+                SignalType::Block,
+                Position::new(Coord(8, 13, 1), Direction::East)
+            ),
+            (
+                Address::new(105),
+                SignalType::Path,
+                Position::new(Coord(8, 13, 1), Direction::West)
+            ),
+            (
+                Address::new(106),
+                SignalType::Path,
+                Position::new(Coord(10, 13, 1), Direction::West)
+            ),
+            (
+                Address::new(107),
+                SignalType::Block,
+                Position::new(Coord(10, 13, 1), Direction::East)
+            ),
+            (
+                Address::new(108),
+                SignalType::Block,
+                Position::new(Coord(4, 16, 1), Direction::South)
+            ),
+            (
+                Address::new(109),
+                SignalType::Path,
+                Position::new(Coord(4, 16, 1), Direction::North)
+            ),
+            (
+                Address::new(110),
+                SignalType::Block,
+                Position::new(Coord(4, 18, 1), Direction::South)
+            ),
+            (
+                Address::new(111),
+                SignalType::Path,
+                Position::new(Coord(4, 18, 1), Direction::North)
+            ),
+            (
+                Address::new(112),
+                SignalType::Block,
+                Position::new(Coord(1, 14, 1), Direction::West)
+            ),
+            (
+                Address::new(113),
+                SignalType::Path,
+                Position::new(Coord(1, 14, 1), Direction::East)
+            ),
+            (
+                Address::new(114),
+                SignalType::Block,
+                Position::new(Coord(4, 3, 2), Direction::South)
+            ),
+            (
+                Address::new(115),
+                SignalType::Path,
+                Position::new(Coord(4, 3, 2), Direction::North)
+            )
+        ]);
+
+        /*
+        Sensors:
+        | Index  | Adresse |
+        |--------|---------|
+        | 0      | 0       |
+        | 1      | 1       |
+        | 2      | 8       |
+        | 3      | 9       |
+        | 4      | 10      |
+        | 5      | 11      |
+        | 6      | 12      |
+        | 7      | 19      |
+
+        Bidirectional Sensors:
+        | Index | Address |
+        |-------|---------|
+        | 0     | 2       |
+        | 1     | 3       |
+        | 2     | 4       |
+        | 3     | 5       |
+        | 4     | 6       |
+        | 5     | 7       |
+        | 6     | 13      |
+        | 7     | 14 (L)  |
+        | 8     | 14 (R)  |
+        | 9     | 15      |
+        | 10    | 16      |
+        | 11    | 17      |
+        | 12    | 18      |
+
+        Switches:
+        | Index | Switch |
+        |-------|--------|
+        | 0     | 1      |
+        | 1     | 2      |
+        | 2     | 3      |
+        | 3     | 4      |
+        | 4     | 5      |
+        | 5     | 6      |
+        | 6     | 7      |
+        | 7     | 8      |
+        | 8     | 14     |
+
+        Bidirectional Switches:
+        | Index | Switch |
+        |-------|--------|
+        | 0     | 9      |
+        | 1     | 10     |
+        | 2     | 11     |
+        | 3     | 12     |
+        | 4     | 13     |
+        | 5     | 15     |
+        | 6     | 16     |
+        | 7     | 17 (I) |
+        | 8     | 17 (A) |
+        | 9     | 18 (I) |
+        | 10    | 18 (A) |
+        | 11    | 19     |
+        | 12    | 20     |
+
+        Signals:
+        x -> x + 80 for x in (0..35)
+        */
+        
+        builder.connect(sensors[0].0, switches[7].0, vec![
+            Rail::new(Position::new(Coord(6, 9, 0), Direction::Southeast), 1, Direction::South)
+        ]);
+        builder.connect(switches[7].0, signals[&Address::new(89)], vec![
+            Rail::new(Position::new(Coord(8, 11, 0), Direction::Northeast), 1, Direction::East)
         ]);
 
         builder.connect(sensors[5].0, sensors[3].0, vec![]);
         builder.connect(sensors[3].0, sensors[1].0, vec![]);
         builder.connect(sensors[1].0, sensors[4].0, vec![]);
 
-        (builder.build().await, switches, sensors)
+        (builder.build().await, switches, bidirectional_switches, sensors, bidirectional_sensors)
     }
 
     #[tokio::test]
     pub async fn test_road() {
-        let (r, _switches, sensors) = create_test_railroad().await;
+        let (r, _switches, _bi_dir_switches, sensors, _bi_dir_sensors) = create_test_railroad().await;
 
         let railroad = Arc::new(r);
 

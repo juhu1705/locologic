@@ -288,20 +288,29 @@ impl Coord {
         })
     }
 
-    /// Returns a coordinate one step ahead in the given `dir`ection
-    pub fn step(&self, dir: Direction) -> Coord {
-        match dir {
-            Direction::North => Coord(self.x() + 1, self.y(), self.z()),
-            Direction::Northeast => Coord(self.x() + 1, self.y() + 1, self.z()),
-            Direction::East => Coord(self.x(), self.y() + 1, self.z()),
-            Direction::Southeast => Coord(self.x() - 1, self.y() + 1, self.z()),
-            Direction::South => Coord(self.x() - 1, self.y(), self.z()),
-            Direction::Southwest => Coord(self.x() - 1, self.y() - 1, self.z()),
-            Direction::West => Coord(self.x(), self.y() - 1, self.z()),
-            Direction::Northwest => Coord(self.x() + 1, self.y() - 1, self.z()),
-            Direction::Up => Coord(self.x(), self.y(), self.z() + 1),
-            Direction::Down => Coord(self.x(), self.y(), self.z() - 1),
+    /// Returns a coordinate amount step ahead in the given `dir`ection.
+    /// If the direction is out of the coordinate system it returns None
+    pub fn step(&self, dir: Direction, amount: usize) -> Option<Coord> {
+        fn safe_sub(x1: usize, x2: usize) -> Option<usize> {
+            if x1 <= x2 {
+                None
+            } else {
+                Some(x1 - x2)
+            }
         }
+
+        Some(match dir {
+            Direction::North => Coord(self.x() + amount, self.y(), self.z()),
+            Direction::Northeast => Coord(self.x() + amount, self.y() + amount, self.z()),
+            Direction::East => Coord(self.x(), self.y() + amount, self.z()),
+            Direction::Southeast => Coord(safe_sub(self.x(), amount)?, self.y() + amount, self.z()),
+            Direction::South => Coord(safe_sub(self.x(), amount)?, self.y(), self.z()),
+            Direction::Southwest => Coord(safe_sub(self.x(), amount)?, safe_sub(self.y(), amount)?, self.z()),
+            Direction::West => Coord(self.x(), safe_sub(self.y(), amount)?, self.z()),
+            Direction::Northwest => Coord(self.x() + amount, safe_sub(self.y(), amount)?, self.z()),
+            Direction::Up => Coord(self.x(), self.y(), self.z() + amount),
+            Direction::Down => Coord(self.x(), self.y(), safe_sub(self.z(), amount)?),
+        })
     }
 
     pub fn abs_distance(&self, coord: &Coord) -> f64 {
@@ -353,11 +362,11 @@ impl Position {
         self.dir
     }
 
-    pub(crate) fn one_step(&self) -> Position {
-        Position {
-            coord: self.coord.step(self.dir),
+    pub fn step(&self, amount: usize) -> Option<Position> {
+        Some(Position {
+            coord: self.coord.step(self.dir, amount)?,
             dir: self.dir,
-        }
+        })
     }
 }
 
@@ -366,11 +375,10 @@ pub struct Rail {
     length: usize,
     pos: Position,
     start_dir: Direction,
-    end_dir: Direction,
 }
 
 impl Rail {
-    /// If possible, creates a Rail from `start` to `to`.
+    /// If possible, creates a Rail from `start` to exclusive `to`.
     ///
     /// # Parameters
     ///
@@ -384,24 +392,26 @@ impl Rail {
     /// use locologic::control::rail_system::components::{Coord, Direction, Position, Rail};
     ///
     /// let from = Position::new(Coord(0, 0, 0), Direction::East);
-    /// let to = Position::new(Coord(0, 3, 0), Direction::Northeast);
-    /// let wrong_to = Position::new(Coord(3,0,0), Direction::Northeast);
+    /// let to = Coord(0, 3, 0);
+    /// let wrong_to = Coord(3,0,0);
     /// let in_direction = Direction::South;
     ///
     /// let right = Rail::perform_step(&from, &to, in_direction);
     /// let wrong = Rail::perform_step(&from, &wrong_to, in_direction);
     ///
-    /// let check_value_first = Rail::new(from, 3, Direction::South, Direction::Northeast);
+    /// let check_value_first = Rail::new(from, 2, Direction::South);
     ///
     /// assert_eq!(right, Some(check_value_first));
     /// assert_eq!(wrong, None);
     /// ```
-    pub fn perform_step(start: &Position, end: &Position, in_dir: Direction) -> Option<Rail> {
+    pub fn perform_step(start: &Position, end: &Coord, in_dir: Direction) -> Option<Rail> {
+        if start.coord == *end {
+            return None
+        }
         Some(Rail {
-            length: start.coord().distance(&end.coord, start.dir)?,
+            length: start.coord().distance(end, start.dir)? - 1,
             pos: *start,
             start_dir: in_dir,
-            end_dir: end.dir,
         })
     }
 
@@ -422,9 +432,9 @@ impl Rail {
     ///         Position::new(Coord(4, 7, 0), Direction::East)
     ///     ], Direction::North);
     /// let expected_vec = vec![
-    ///     Rail::new(Position::new(Coord(0, 0, 0), Direction::East), 4, Direction::North, Direction::North),
-    ///     Rail::new(Position::new(Coord(1, 4, 0), Direction::North), 0, Direction::South, Direction::Northeast),
-    ///     Rail::new(Position::new(Coord(2, 5, 0), Direction::Northeast), 2, Direction::Southwest, Direction::East),
+    ///     Rail::new(Position::new(Coord(0, 0, 0), Direction::East), 3, Direction::North),
+    ///     Rail::new(Position::new(Coord(0, 4, 0), Direction::North), 0, Direction::West),
+    ///     Rail::new(Position::new(Coord(1, 4, 0), Direction::Northeast), 2, Direction::South),
     /// ];
     ///
     /// assert_eq!(connection, Some(expected_vec));
@@ -434,20 +444,57 @@ impl Rail {
         let mut previous = *steps.first()?;
 
         for step in steps.iter().skip(1) {
-            connection_rail.push(Rail::perform_step(&previous, step, in_dir)?);
-            previous = step.one_step();
-            in_dir = previous.dir.rotate_by(4);
+            connection_rail.push(Rail::perform_step(&previous, &step.coord, in_dir)?);
+            in_dir = !previous.dir;
+            previous = *step;
         }
 
         Some(connection_rail)
     }
 
-    pub fn new(from: Position, length: usize, start_dir: Direction, end_dir: Direction) -> Self {
+    /// Creates a row of rails by the instruction of the amount of steps to do and the direction where to go.
+    /// Note, that if you say 'go x in direction y' it actually goes 'x + 1' positions in that direction.
+    /// This is because the next rail is placed one ahead of the rail placed.
+    /// This enforces that two following rails cannot start in one position.
+    ///
+    /// # Usage
+    ///
+    /// ```
+    /// use locologic::control::rail_system::components::{Coord, Direction, Position, Rail};
+    /// let start_pos = Coord(0,0,0);
+    /// let steps = [(0, Direction::East), (3, Direction::Northeast), (2, Direction::South)];
+    /// let in_dir = Direction::North;
+    ///
+    /// let calculated = Rail::connection_by_length(&steps, in_dir, start_pos);
+    /// let expected = Some(vec![
+    ///     Rail::new(Position::new(Coord(0,0,0), Direction::East), 0, Direction::North),
+    ///     Rail::new(Position::new(Coord(0,1,0), Direction::Northeast), 3, Direction::West),
+    ///     Rail::new(Position::new(Coord(4,5,0), Direction::South), 2, Direction::Southwest)
+    /// ]);
+    ///
+    /// assert_eq!(calculated, expected);
+    /// ```
+    pub fn connection_by_length(steps: &[(usize, Direction)], mut in_dir: Direction, mut start_pos: Coord) -> Option<Vec<Rail>> {
+        let mut connection_rail = vec![];
+
+        for (step, dir) in steps.iter() {
+            connection_rail.push(Rail {
+                length: *step,
+                pos: Position::new(start_pos, *dir),
+                start_dir: in_dir,
+            });
+            start_pos = dbg!(start_pos.step(*dir, *step + 1))?;
+            in_dir = !*dir;
+        }
+
+        Some(connection_rail)
+    }
+
+    pub fn new(from: Position, length: usize, start_dir: Direction) -> Self {
         Rail {
             length,
             pos: from,
             start_dir,
-            end_dir,
         }
     }
 
@@ -491,10 +538,6 @@ impl Rail {
 
     pub fn start_dir(&self) -> Direction {
         self.start_dir
-    }
-
-    pub fn end_dir(&self) -> Direction {
-        self.end_dir
     }
 }
 
@@ -829,9 +872,7 @@ impl Signal {
             }
         }
     }
-}
 
-impl Signal {
     pub async fn update(&mut self, railroad: &Railroad) {
         if self.trains.is_empty() {
             self.next(railroad).await;
