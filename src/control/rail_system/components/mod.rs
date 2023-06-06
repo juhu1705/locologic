@@ -38,8 +38,7 @@ pub enum Speed<Spd = u8> {
     Stop,
     /// Performs an immediate stop action. Trains do stop immediately.
     EmergencyStop,
-    /// Sets the slots speed to a given value. If you want a slot speed to set to 0
-    /// use [`SpeedArg::Stop`] or create your [`SpeedArg`] using [`SpeedArg::new()`].
+    /// Sets the slots speed to a given value.
     Drive(Spd),
 }
 
@@ -85,7 +84,7 @@ where
 pub enum Node {
     Signal(Address, Position),
     Sensor(Address, Position),
-    Switch(Address, Position, SwitchType),
+    Switch(Address, Position, SwitchType, NodeIndex),
     Station(Address, Position),
     Cross(Address),
     Buffer(Position),
@@ -96,7 +95,7 @@ impl Node {
         match self {
             Node::Signal(_, position) => *position,
             Node::Sensor(_, position) => *position,
-            Node::Switch(_, position, _) => *position,
+            Node::Switch(_, position, ..) => *position,
             Node::Station(_, position) => *position,
             Node::Cross(adr) => {
                 if let Some(cross) = rail.get_crossing_mutex(adr) {
@@ -291,25 +290,17 @@ impl Coord {
     /// Returns a coordinate amount step ahead in the given `dir`ection.
     /// If the direction is out of the coordinate system it returns None
     pub fn step(&self, dir: Direction, amount: usize) -> Option<Coord> {
-        fn safe_sub(x1: usize, x2: usize) -> Option<usize> {
-            if x1 <= x2 {
-                None
-            } else {
-                Some(x1 - x2)
-            }
-        }
-
         Some(match dir {
-            Direction::North => Coord(self.x() + amount, self.y(), self.z()),
-            Direction::Northeast => Coord(self.x() + amount, self.y() + amount, self.z()),
-            Direction::East => Coord(self.x(), self.y() + amount, self.z()),
-            Direction::Southeast => Coord(safe_sub(self.x(), amount)?, self.y() + amount, self.z()),
-            Direction::South => Coord(safe_sub(self.x(), amount)?, self.y(), self.z()),
-            Direction::Southwest => Coord(safe_sub(self.x(), amount)?, safe_sub(self.y(), amount)?, self.z()),
-            Direction::West => Coord(self.x(), safe_sub(self.y(), amount)?, self.z()),
-            Direction::Northwest => Coord(self.x() + amount, safe_sub(self.y(), amount)?, self.z()),
-            Direction::Up => Coord(self.x(), self.y(), self.z() + amount),
-            Direction::Down => Coord(self.x(), self.y(), safe_sub(self.z(), amount)?),
+            Direction::North => Coord(self.x().checked_sub(amount)?, self.y(), self.z()),
+            Direction::Northeast => Coord(self.x().checked_sub(amount)?, self.y().checked_add(amount)?, self.z()),
+            Direction::East => Coord(self.x(), self.y().checked_add(amount)?, self.z()),
+            Direction::Southeast => Coord(self.x().checked_add(amount)?, self.y().checked_add(amount)?, self.z()),
+            Direction::South => Coord(self.x().checked_add(amount)?, self.y(), self.z()),
+            Direction::Southwest => Coord(self.x().checked_add(amount)?, self.y().checked_sub(amount)?, self.z()),
+            Direction::West => Coord(self.x(), self.y().checked_sub(amount)?, self.z()),
+            Direction::Northwest => Coord(self.x().checked_sub(amount)?, self.y().checked_sub(amount)?, self.z()),
+            Direction::Up => Coord(self.x(), self.y(), self.z().checked_add(amount)?),
+            Direction::Down => Coord(self.x(), self.y(), self.z().checked_sub(amount)?),
         })
     }
 
@@ -378,12 +369,12 @@ pub struct Rail {
 }
 
 impl Rail {
-    /// If possible, creates a Rail from `start` to exclusive `to`.
+    /// If possible, creates a Rail from `start` to exclusive `end`.
     ///
     /// # Parameters
     ///
     /// - `start`: The position for the rail to begin.
-    /// - `end`: The last position of the rail.
+    /// - `end`: The last position of the rail. (exclusive)
     /// - `in_dir`: The incoming direction the last rail part is placed.
     ///
     /// # Usage
@@ -462,14 +453,14 @@ impl Rail {
     /// ```
     /// use locologic::control::rail_system::components::{Coord, Direction, Position, Rail};
     /// let start_pos = Coord(0,0,0);
-    /// let steps = [(0, Direction::East), (3, Direction::Northeast), (2, Direction::South)];
+    /// let steps = [(0, Direction::East), (3, Direction::Southeast), (2, Direction::North)];
     /// let in_dir = Direction::North;
     ///
     /// let calculated = Rail::connection_by_length(&steps, in_dir, start_pos);
     /// let expected = Some(vec![
     ///     Rail::new(Position::new(Coord(0,0,0), Direction::East), 0, Direction::North),
-    ///     Rail::new(Position::new(Coord(0,1,0), Direction::Northeast), 3, Direction::West),
-    ///     Rail::new(Position::new(Coord(4,5,0), Direction::South), 2, Direction::Southwest)
+    ///     Rail::new(Position::new(Coord(0,1,0), Direction::Southeast), 3, Direction::West),
+    ///     Rail::new(Position::new(Coord(4,5,0), Direction::North), 2, Direction::Northwest)
     /// ]);
     ///
     /// assert_eq!(calculated, expected);
@@ -483,7 +474,7 @@ impl Rail {
                 pos: Position::new(start_pos, *dir),
                 start_dir: in_dir,
             });
-            start_pos = dbg!(start_pos.step(*dir, *step + 1))?;
+            start_pos = start_pos.step(*dir, *step + 1)?;
             in_dir = !*dir;
         }
 
@@ -509,11 +500,11 @@ impl Rail {
             | Direction::South
             | Direction::West
             | Direction::Up
-            | Direction::Down => self.length as f64,
+            | Direction::Down => (self.length + 1) as f64,
             Direction::Northeast
             | Direction::Southeast
             | Direction::Southwest
-            | Direction::Northwest => ((self.length.pow(2) * 2) as f64).sqrt(),
+            | Direction::Northwest => (((self.length + 1).pow(2) * 2) as f64).sqrt(),
         }
     }
 
@@ -524,11 +515,11 @@ impl Rail {
             | Direction::South
             | Direction::West
             | Direction::Up
-            | Direction::Down => self.length,
+            | Direction::Down => self.length + 1,
             Direction::Northeast
             | Direction::Southeast
             | Direction::Southwest
-            | Direction::Northwest => self.length * 2,
+            | Direction::Northwest => (self.length + 1) * 2,
         }
     }
 

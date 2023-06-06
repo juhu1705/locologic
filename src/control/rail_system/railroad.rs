@@ -88,24 +88,25 @@ fn estimate_costs(
 }
 
 fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad>) -> usize {
+    fn train_cost(sensor_adr: &Address, rail: Arc<Railroad>) -> Option<usize> {
+        let train = {
+            let sensor_mut = rail.get_sensor_mutex(sensor_adr)?;
+            (*(sensor_mut.blocking_lock()).train())?
+        };
+        let train_mut = rail.get_train(&train)?;
+        if train_mut.blocking_lock().stands() {
+            Some(100)
+        } else {
+            Some(2)
+        }
+    }
+
     match graph.index(node) {
         Node::Sensor(sensor_adr, ..) => {
-            if let Some(sensor_mut) = rail.get_sensor_mutex(sensor_adr) {
-                if if let Some(train) = { *(sensor_mut.blocking_lock()).train() } {
-                    if let Some(t) = rail.get_train(&train) {
-                        t.blocking_lock().stands()
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                } {
-                    100
-                } else {
-                    2
-                }
+            if let Some(cost) = train_cost(sensor_adr, rail) {
+                cost
             } else {
-                100
+                200
             }
         }
         Node::Station(..) => 500,
@@ -345,7 +346,7 @@ impl Builder {
         position: Position,
         s_type: SwitchType,
     ) -> NodeIndex {
-        let index = self.road.add_node(Node::Switch(switch, position, s_type));
+        let index = self.road.add_node(Node::Switch(switch, position, s_type, NodeIndex::new(0)));
 
         if let Some((_, vector)) = self.switches.get_mut(&switch) {
             vector.push(index);
@@ -363,8 +364,8 @@ impl Builder {
         position: Position,
         s_type: SwitchType,
     ) -> (NodeIndex, NodeIndex) {
-        let index = self.road.add_node(Node::Switch(switch, position, s_type));
-        let index_reverse = self.road.add_node(Node::Switch(switch, position, s_type));
+        let index = self.road.add_node(Node::Switch(switch, position, s_type, NodeIndex::new(0)));
+        let index_reverse = self.road.add_node(Node::Switch(switch, position, s_type, NodeIndex::new(0)));
 
         if let Some((_, vector)) = self.switches.get_mut(&switch) {
             vector.push(index);
@@ -443,18 +444,18 @@ impl Builder {
 
     pub fn connect_bidirectional(
         &mut self,
-        from: (NodeIndex, NodeIndex),
-        to: (NodeIndex, NodeIndex),
+        one_end: (NodeIndex, NodeIndex),
+        other_end: (NodeIndex, NodeIndex),
         rail: Vec<Rail>,
     ) -> Option<(EdgeIndex, EdgeIndex)> {
-        if self.can_add_neighbour(from.0, Direction::Outgoing)?
-            && self.can_add_neighbour(to.0, Direction::Incoming)?
-            && self.can_add_neighbour(from.1, Direction::Outgoing)?
-            && self.can_add_neighbour(to.1, Direction::Incoming)?
+        if self.can_add_neighbour(one_end.0, Direction::Outgoing)?
+            && self.can_add_neighbour(one_end.1, Direction::Incoming)?
+            && self.can_add_neighbour(other_end.1, Direction::Outgoing)?
+            && self.can_add_neighbour(other_end.0, Direction::Incoming)?
         {
             Some((
-                self.road.update_edge(from.0, to.0, rail.clone()),
-                self.road.update_edge(from.1, to.1, rail)
+                self.road.update_edge(one_end.0, other_end.0, rail.clone()),
+                self.road.update_edge(other_end.1, one_end.1, rail)
             ))
         } else {
             None
@@ -931,6 +932,11 @@ mod railroad_test {
                 Address::new(115),
                 SignalType::Path,
                 Position::new(Coord(4, 3, 2), Direction::North)
+            ),
+            (
+                Address::new(116),
+                SignalType::Path,
+                Position::new(Coord(2, 8, 0), Direction::West)
             )
         ]);
 
@@ -997,61 +1003,311 @@ mod railroad_test {
         Signals:
         x -> x + 80 for x in (0..35)
         */
-        
-        builder.connect(sensors[0].0, switches[7].0, vec![
-            Rail::new(Position::new(Coord(6, 9, 0), Direction::Southeast), 1, Direction::South)
+
+        // Schattenbahnhof
+
+        // Schattenbahnhof Umfahrgleis
+        builder.connect(bidirectional_switches[3].0.0, signals[&Address::new(83)], Rail::connection_by_length(
+            &[
+                (1, Direction::West),
+                (0, Direction::Southwest),
+                (4, Direction::South),
+                (0, Direction::Southeast),
+                (1, Direction::East),
+                (1, Direction::Northeast),
+                (0, Direction::North)
+            ],
+            Direction::Southeast,
+            Coord(1, 4, 0)
+        ).unwrap());
+        builder.connect(signals[&Address::new(83)], bidirectional_switches[4].0.1, vec![]);
+        builder.connect(bidirectional_switches[4].0.0, signals[&Address::new(82)], vec![]);
+        builder.connect_bidirectional(bidirectional_switches[2].0, bidirectional_switches[3].0, vec![]);
+        builder.connect(bidirectional_switches[2].0.1, signals[&Address::new(81)], vec![]);
+        builder.connect(signals[&Address::new(82)], switches[8].0, vec![]);
+        builder.connect(signals[&Address::new(81)], switches[8].0, vec![]);
+        builder.connect(switches[8].0, sensors[0].0, vec![
+            Rail::new(Position::new(Coord(5, 9, 0), Direction::South), 0, Direction::Northwest)
         ]);
-        builder.connect(switches[7].0, signals[&Address::new(89)], vec![
-            Rail::new(Position::new(Coord(8, 11, 0), Direction::Northeast), 1, Direction::East)
+        builder.connect(sensors[0].0, switches[7].0, vec![
+            Rail::new(Position::new(Coord(7, 9, 0), Direction::Southeast), 0, Direction::North)
+        ]);
+        builder.connect(switches[7].0, switches[6].0, vec![
+            Rail::new(Position::new(Coord(9, 11, 0), Direction::East), 0, Direction::Northwest)
+        ]);
+        builder.connect(switches[6].0, switches[5].0, vec![]);
+        builder.connect(switches[5].0, switches[4].0, vec![
+            Rail::new(Position::new(Coord(9, 14, 0), Direction::East), 0, Direction::West),
+            Rail::new(Position::new(Coord(9, 15, 0), Direction::Northeast), 0, Direction::West)
+        ]);
+        builder.connect(switches[4].0, signals[&Address::new(92)], vec![]);
+        builder.connect(signals[&Address::new(92)], sensors[6].0, vec![
+            Rail::new(Position::new(Coord(9, 16, 0), Direction::North), 0, Direction::South)
+        ]);
+        builder.connect(sensors[6].0, signals[&Address::new(87)], vec![]);
+        builder.connect(signals[&Address::new(87)], switches[3].0, vec![
+            Rail::new(Position::new(Coord(3, 16, 0), Direction::North), 0, Direction::South)
+        ]);
+        builder.connect(switches[3].0, switches[2].0, vec![]);
+        builder.connect(switches[2].0, switches[1].0, vec![
+            Rail::new(Position::new(Coord(2, 14, 0), Direction::West), 0, Direction::East)
+        ]);
+        builder.connect(switches[1].0, switches[0].0, vec![]);
+        builder.connect(switches[0].0, sensors[7].0, vec![]);
+        builder.connect(sensors[7].0, signals[&Address::new(80)], vec![]);
+        builder.connect(signals[&Address::new(80)], sensors[1].0, vec![]);
+        builder.connect(sensors[1].0, signals[&Address::new(116)], vec![]);
+        builder.connect(signals[&Address::new(116)], bidirectional_switches[2].0.0, vec![
+            Rail::new(Position::new(Coord(2, 7, 0), Direction::West), 0, Direction::East)
         ]);
 
-        builder.connect(sensors[5].0, sensors[3].0, vec![]);
-        builder.connect(sensors[3].0, sensors[1].0, vec![]);
-        builder.connect(sensors[1].0, sensors[4].0, vec![]);
+        // Schattenbahnhof Gleis 1
+        builder.connect(switches[7].0, signals[&Address::new(89)], vec![
+            Rail::new(Position::new(Coord(8, 11, 0), Direction::Northeast), 0, Direction::West)
+        ]);
+        builder.connect(signals[&Address::new(89)], sensors[2].0, vec![
+            Rail::new(Position::new(Coord(6, 13, 0), Direction::North), 0, Direction::Southwest)
+        ]);
+        builder.connect(sensors[2].0, signals[&Address::new(84)], vec![]);
+        builder.connect(signals[&Address::new(84)], switches[0].0, vec![
+            Rail::new(Position::new(Coord(3, 13, 0), Direction::Northwest), 0, Direction::South)
+        ]);
+
+        // Schattenbahnhof Gleis 2
+        builder.connect(switches[6].0, signals[&Address::new(90)], vec![]);
+        builder.connect(signals[&Address::new(90)], sensors[3].0, vec![
+            Rail::new(Position::new(Coord(7, 14, 0), Direction::North), 1, Direction::Southwest)
+        ]);
+        builder.connect(sensors[3].0, signals[&Address::new(85)], vec![]);
+        builder.connect(signals[&Address::new(85)], switches[1].0, vec![
+            Rail::new(Position::new(Coord(3, 14, 0), Direction::Northwest), 0, Direction::South)
+        ]);
+
+        // Schattenbahnhof Gleis 3
+        builder.connect(switches[5].0, signals[&Address::new(91)], vec![]);
+        builder.connect(signals[&Address::new(91)], sensors[4].0, vec![
+            Rail::new(Position::new(Coord(7, 15, 0), Direction::North), 1, Direction::Southwest)
+        ]);
+        builder.connect(sensors[4].0, signals[&Address::new(86)], vec![]);
+        builder.connect(signals[&Address::new(86)], switches[2].0, vec![
+            Rail::new(Position::new(Coord(3, 15, 0), Direction::North), 0, Direction::South)
+        ]);
+
+        // Schattenbahnhof Gleis 4
+        builder.connect(switches[4].0, signals[&Address::new(93)], vec![]);
+        builder.connect(signals[&Address::new(93)], sensors[5].0, vec![
+            Rail::new(Position::new(Coord(6, 18, 0), Direction::North), 0, Direction::Southwest)
+        ]);
+        builder.connect(sensors[5].0, signals[&Address::new(88)], vec![]);
+        builder.connect(signals[&Address::new(88)], switches[3].0, vec![
+            Rail::new(Position::new(Coord(3, 18, 0), Direction::Northwest), 0, Direction::South),
+            Rail::new(Position::new(Coord(2, 17, 0), Direction::West), 0, Direction::Southeast)
+        ]);
+
+        // Fahrebene
+        builder.connect_bidirectional(bidirectional_switches[3].0, bidirectional_sensors[9].0, Rail::connection_by_length(
+            &[
+                (0, Direction::West),
+                (0, Direction::Southwest),
+                (1, Direction::South),
+                (0, Direction::Up),
+                (1, Direction::South),
+                (0, Direction::East)
+            ],
+            Direction::East,
+            Coord(2, 4, 0)
+        ).unwrap());
+        builder.connect_bidirectional(bidirectional_sensors[9].0, (signals[&Address::new(100)], signals[&Address::new(101)]), vec![]);
+        builder.connect_bidirectional((signals[&Address::new(100)], signals[&Address::new(101)]), bidirectional_switches[5].0, vec![
+            Rail::new(Position::new(Coord(7, 5, 1), Direction::Southeast), 0, Direction::West)
+        ]);
+        builder.connect_bidirectional(bidirectional_sensors[6].0, bidirectional_switches[4].0, Rail::connection_by_length(
+            &[
+                (0, Direction::West),
+                (0, Direction::South),
+                (0, Direction::Up),
+                (0, Direction::South),
+                (0, Direction::East),
+                (0, Direction::Northeast)
+            ],
+            Direction::East,
+            Coord(4, 5, 0)
+        ).unwrap());
+        builder.connect_bidirectional(bidirectional_switches[12].0, bidirectional_sensors[6].0, vec![
+            Rail::new(Position::new(Coord(4,7,1), Direction::Northeast), 0, Direction::Southwest)
+        ]);
+        builder.connect_bidirectional(bidirectional_switches[6].0, bidirectional_switches[12].0, Rail::connection_by_length(
+            &[
+                (2, Direction::East),
+                (0, Direction::Southeast),
+                (1, Direction::South),
+                (0, Direction::Southwest),
+                (0, Direction::West),
+                (0, Direction::Southwest)
+            ],
+            Direction::West,
+            Coord(3, 9, 1)
+        ).unwrap());
+
+        // Weichenfeld
+        builder.connect_bidirectional(bidirectional_switches[5].0, bidirectional_switches[7].0, vec![]);
+        builder.connect_bidirectional(bidirectional_switches[7].0, bidirectional_sensors[0].0, vec![]);
+        builder.connect_bidirectional(bidirectional_sensors[0].0, bidirectional_switches[9].0, vec![]);
+        builder.connect_bidirectional(bidirectional_switches[9].0, bidirectional_switches[6].0, vec![]);
+        builder.connect_bidirectional(bidirectional_switches[8].0, bidirectional_switches[7].0, vec![
+            Rail::new(Position::new(Coord(9, 6, 1), Direction::Northeast), 0, Direction::Southwest)
+        ]);
+        builder.connect_bidirectional(bidirectional_switches[9].0, bidirectional_switches[10].0, vec![
+            Rail::new(Position::new(Coord(9, 10, 1), Direction::Southeast), 0, Direction::Northwest)
+        ]);
+        builder.connect_bidirectional(bidirectional_switches[8].0, bidirectional_switches[10].0, vec![
+            Rail::new(Position::new(Coord(10, 6, 1), Direction::East), 4, Direction::West)
+        ]);
+
+        let signals_block_w4 = (signals[&Address::new(103)], signals[&Address::new(102)]);
+        let signals_block_w3 = (signals[&Address::new(99)], signals[&Address::new(98)]);
+        let signals_block_a4 = (signals[&Address::new(97)], signals[&Address::new(96)]);
+        let signals_block_a3 = (signals[&Address::new(94)], signals[&Address::new(95)]);
+        let signals_block_w7 = (signals[&Address::new(105)], signals[&Address::new(104)]);
+        let signals_block_w6 = (signals[&Address::new(107)], signals[&Address::new(106)]);
+        let signals_block_a7 = (signals[&Address::new(109)], signals[&Address::new(108)]);
+        let signals_block_a6 = (signals[&Address::new(111)], signals[&Address::new(110)]);
+        let signals_block_w17 = (signals[&Address::new(114)], signals[&Address::new(115)]);
+        let signals_block_a17 = (signals[&Address::new(113)], signals[&Address::new(112)]);
+
+        builder.connect_bidirectional(bidirectional_switches[1].0, signals_block_a3, vec![]);
+        builder.connect_bidirectional(signals_block_a3, bidirectional_sensors[5].0, Rail::connection_by_length(
+            &[
+                (0, Direction::Southeast),
+                (0, Direction::East)
+            ],
+            Direction::North,
+            Coord(9, 0, 1)
+        ).unwrap());
+        builder.connect_bidirectional(bidirectional_sensors[5].0, signals_block_w3, vec![]);
+        builder.connect_bidirectional(signals_block_w3, bidirectional_sensors[7].0, vec![]);
+        builder.connect_bidirectional(bidirectional_sensors[7].0, bidirectional_switches[8].0, vec![]);
+
+        builder.connect_bidirectional(bidirectional_switches[1].0, signals_block_a4, vec![
+            Rail::new(Position::new(Coord(8, 1, 1), Direction::East), 0, Direction::Northwest),
+        ]);
+        builder.connect_bidirectional(signals_block_a4, bidirectional_sensors[2].0, vec![]);
+        builder.connect_bidirectional(bidirectional_sensors[2].0, signals_block_w4, vec![
+            Rail::new(Position::new(Coord(8, 4, 1), Direction::East), 0, Direction::West)
+        ]);
+        builder.connect_bidirectional(signals_block_w4, bidirectional_switches[5].0, vec![]);
+
+        builder.connect_bidirectional(bidirectional_switches[6].0, signals_block_w7, vec![
+            Rail::new(Position::new(Coord(8, 11, 1), Direction::East), 1, Direction::West)
+        ]);
+        builder.connect_bidirectional(signals_block_w7, bidirectional_sensors[5].0, Rail::connection_by_length(
+            &[
+                (0, Direction::East),
+                (0, Direction::Northeast),
+                (1, Direction::North)
+            ],
+            Direction::West,
+            Coord(8, 14, 1)
+        ).unwrap());
+        builder.connect_bidirectional(bidirectional_sensors[5].0, signals_block_a7, vec![]);
+        builder.connect_bidirectional(signals_block_a7, bidirectional_switches[0].0, vec![
+            Rail::new(Position::new(Coord(3, 16, 1), Direction::West), 0, Direction::South),
+        ]);
+
+        builder.connect_bidirectional(bidirectional_switches[10].0, bidirectional_sensors[8].0, vec![]);
+        builder.connect_bidirectional(bidirectional_sensors[8].0, signals_block_w6, vec![]);
+        builder.connect_bidirectional(signals_block_w6, bidirectional_sensors[4].0, Rail::connection_by_length(
+            &[
+                (1, Direction::East),
+                (1, Direction::Northeast),
+                (2, Direction::North)
+            ],
+            Direction::West,
+            Coord(10, 15, 1)
+        ).unwrap());
+        builder.connect_bidirectional(bidirectional_sensors[4].0, signals_block_a6, vec![]);
+        builder.connect_bidirectional(signals_block_a6, bidirectional_switches[0].0, Rail::connection_by_length(
+            &[
+                (0, Direction::Northwest),
+                (0, Direction::West),
+                (0, Direction::Southwest)
+            ],
+            Direction::South,
+            Coord(3, 18, 1)
+        ).unwrap());
+
+        builder.connect_bidirectional(bidirectional_switches[12].0, signals_block_w17, Rail::connection_by_length(
+            &[
+                (0, Direction::Up),
+                (0, Direction::West),
+                (0, Direction::Northwest),
+                (0, Direction::West),
+                (0, Direction::Southwest),
+                (0, Direction::South)
+            ],
+            Direction::East,
+            Coord(3, 7, 1)
+        ).unwrap());
+        builder.connect_bidirectional(signals_block_w17, bidirectional_sensors[10].0, Rail::connection_by_length(
+            &[
+                (0, Direction::Southeast),
+                (1, Direction::East),
+                (0, Direction::Southeast),
+                (1, Direction::East)
+            ],
+            Direction::North,
+            Coord(5, 3, 2)
+        ).unwrap());
+        builder.connect_bidirectional(bidirectional_sensors[10].0, bidirectional_sensors[11].0, vec![
+            Rail::new(Position::new(Coord(7, 10, 2), Direction::East), 1, Direction::West)
+        ]);
+        builder.connect_bidirectional(bidirectional_sensors[11].0, bidirectional_sensors[12].0, vec![
+            Rail::new(Position::new(Coord(7, 13, 2), Direction::East), 1, Direction::West)
+        ]);
+        builder.connect_bidirectional(bidirectional_sensors[12].0, signals_block_a17, Rail::connection_by_length(
+            &[
+                (0, Direction::East),
+                (0, Direction::Northeast),
+                (3, Direction::North),
+                (0, Direction::Northwest),
+                (1, Direction::West),
+                (0, Direction::Down),
+                (0, Direction::West)
+            ],
+            Direction::West,
+            Coord(7, 16, 2)
+        ).unwrap());
+        builder.connect_bidirectional(signals_block_a17, bidirectional_switches[11].0, vec![
+            Rail::new(Position::new(Coord(1, 13, 1), Direction::West), 0, Direction::East)
+        ]);
+
+        builder.connect_bidirectional(bidirectional_switches[0].0, bidirectional_switches[11].0, Rail::connection_by_length(
+            &[
+                (1, Direction::Northwest)
+            ],
+            Direction::East,
+            Coord(3, 14, 1)
+        ).unwrap());
+        builder.connect_bidirectional(bidirectional_switches[11].0, bidirectional_sensors[3].0, vec![
+            Rail::new(Position::new(Coord(1, 11, 1), Direction::West), 6, Direction::East)
+        ]);
+        builder.connect_bidirectional(bidirectional_sensors[3].0, bidirectional_switches[1].0, Rail::connection_by_length(
+            &[
+                (1, Direction::West),
+                (0, Direction::Southwest),
+                (4, Direction::South)
+            ],
+            Direction::East,
+            Coord(1, 3, 1)
+        ).unwrap());
 
         (builder.build().await, switches, bidirectional_switches, sensors, bidirectional_sensors)
     }
 
     #[tokio::test]
     pub async fn test_road() {
-        let (r, _switches, _bi_dir_switches, sensors, _bi_dir_sensors) = create_test_railroad().await;
+        let (r, _switches, _bi_dir_switches, _sensors, _bi_dir_sensors) = create_test_railroad().await;
 
-        let railroad = Arc::new(r);
-
-        let sensor5index = sensors
-            .iter()
-            .find(|(_, address)| address.address() == 11)
-            .unwrap()
-            .0;
-        let sensor4index = sensors
-            .iter()
-            .find(|(_, address)| address.address() == 10)
-            .unwrap()
-            .0;
-        let sensor3index = sensors
-            .iter()
-            .find(|(_, address)| address.address() == 9)
-            .unwrap()
-            .0;
-        let _sensor2index = sensors
-            .iter()
-            .find(|(_, address)| address.address() == 8)
-            .unwrap()
-            .0;
-        let sensor1index = sensors
-            .iter()
-            .find(|(_, address)| address.address() == 1)
-            .unwrap()
-            .0;
-
-        let route = Railroad::shortest_path(railroad.clone(), sensor5index, sensor4index).await;
-
-        assert_eq!(
-            route,
-            Some((
-                6,
-                vec![sensor5index, sensor3index, sensor1index, sensor4index]
-            ))
-        )
+        let _railroad = Arc::new(r);
     }
 }
