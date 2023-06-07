@@ -44,7 +44,3 @@ or add some test logs to your commitment.
 | bytes      | MIT     |
 | tokio      | MIT     |
 | locodrive  | MIT     |
-| locodrive  | MIT     |
-| locodrive  | MIT     |
-| locodrive  | MIT     |
-| locodrive  | MIT     |

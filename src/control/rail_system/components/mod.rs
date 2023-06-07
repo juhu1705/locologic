@@ -1,5 +1,7 @@
+/// Interface to locodrive
 #[cfg(feature = "locodrive")]
 mod locodrive;
+/// Implementation of larger methods regarding signals
 mod signal_checks;
 
 use crate::control::rail_system::railroad::Railroad;
@@ -292,13 +294,29 @@ impl Coord {
     pub fn step(&self, dir: Direction, amount: usize) -> Option<Coord> {
         Some(match dir {
             Direction::North => Coord(self.x().checked_sub(amount)?, self.y(), self.z()),
-            Direction::Northeast => Coord(self.x().checked_sub(amount)?, self.y().checked_add(amount)?, self.z()),
+            Direction::Northeast => Coord(
+                self.x().checked_sub(amount)?,
+                self.y().checked_add(amount)?,
+                self.z(),
+            ),
             Direction::East => Coord(self.x(), self.y().checked_add(amount)?, self.z()),
-            Direction::Southeast => Coord(self.x().checked_add(amount)?, self.y().checked_add(amount)?, self.z()),
+            Direction::Southeast => Coord(
+                self.x().checked_add(amount)?,
+                self.y().checked_add(amount)?,
+                self.z(),
+            ),
             Direction::South => Coord(self.x().checked_add(amount)?, self.y(), self.z()),
-            Direction::Southwest => Coord(self.x().checked_add(amount)?, self.y().checked_sub(amount)?, self.z()),
+            Direction::Southwest => Coord(
+                self.x().checked_add(amount)?,
+                self.y().checked_sub(amount)?,
+                self.z(),
+            ),
             Direction::West => Coord(self.x(), self.y().checked_sub(amount)?, self.z()),
-            Direction::Northwest => Coord(self.x().checked_sub(amount)?, self.y().checked_sub(amount)?, self.z()),
+            Direction::Northwest => Coord(
+                self.x().checked_sub(amount)?,
+                self.y().checked_sub(amount)?,
+                self.z(),
+            ),
             Direction::Up => Coord(self.x(), self.y(), self.z().checked_add(amount)?),
             Direction::Down => Coord(self.x(), self.y(), self.z().checked_sub(amount)?),
         })
@@ -397,7 +415,7 @@ impl Rail {
     /// ```
     pub fn perform_step(start: &Position, end: &Coord, in_dir: Direction) -> Option<Rail> {
         if start.coord == *end {
-            return None
+            return None;
         }
         Some(Rail {
             length: start.coord().distance(end, start.dir)? - 1,
@@ -465,7 +483,11 @@ impl Rail {
     ///
     /// assert_eq!(calculated, expected);
     /// ```
-    pub fn connection_by_length(steps: &[(usize, Direction)], mut in_dir: Direction, mut start_pos: Coord) -> Option<Vec<Rail>> {
+    pub fn connection_by_length(
+        steps: &[(usize, Direction)],
+        mut in_dir: Direction,
+        mut start_pos: Coord,
+    ) -> Option<Vec<Rail>> {
         let mut connection_rail = vec![];
 
         for (step, dir) in steps.iter() {
@@ -712,7 +734,7 @@ impl Sensor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum SignalType {
     Block,
     Path,
