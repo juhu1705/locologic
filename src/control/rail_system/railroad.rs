@@ -57,9 +57,7 @@ impl Railroad {
             .1
             .iter()
             .find(|ind| match *road.index(**ind) {
-                Node::Switch(adr_check, pos_check, ..) => {
-                    adr_check == *adr && pos_check == *pos
-                }
+                Node::Switch(adr_check, pos_check, ..) => adr_check == *adr && pos_check == *pos,
                 _ => false,
             })
     }
@@ -423,9 +421,13 @@ impl Builder {
         position: Position,
         s_type: SwitchType,
     ) -> NodeIndex {
-        let index = self
-            .road
-            .add_node(Node::Switch(switch, position, s_type, NodeIndex::new(0)));
+        let index = self.road.add_node(Node::Switch(
+            switch,
+            position,
+            s_type,
+            None,
+            Direction::Incoming,
+        ));
 
         if let Some((_, vector)) = self.switches.get_mut(&switch) {
             vector.push(index);
@@ -443,12 +445,20 @@ impl Builder {
         position: Position,
         s_type: SwitchType,
     ) -> (NodeIndex, NodeIndex) {
-        let index = self
-            .road
-            .add_node(Node::Switch(switch, position, s_type, NodeIndex::new(0)));
-        let index_reverse =
-            self.road
-                .add_node(Node::Switch(switch, position, s_type, NodeIndex::new(0)));
+        let index = self.road.add_node(Node::Switch(
+            switch,
+            position,
+            s_type,
+            None,
+            Direction::Outgoing,
+        ));
+        let index_reverse = self.road.add_node(Node::Switch(
+            switch,
+            position,
+            s_type,
+            None,
+            Direction::Outgoing,
+        ));
 
         if let Some((_, vector)) = self.switches.get_mut(&switch) {
             vector.push(index);
@@ -510,7 +520,6 @@ impl Builder {
         }
     }
 
-    #[warn(unused_assignments)]
     pub fn connect(
         &mut self,
         from: NodeIndex,
@@ -546,7 +555,64 @@ impl Builder {
         }
     }
 
-    pub async fn build(self) -> Railroad {
+    /// This function is automatically called at railroad building for the first connected neighbour of your switch, if you do not set it manually before.
+    pub fn set_switch_first_dir(&mut self, switch: NodeIndex, default_connection: NodeIndex) {
+        let mut ins = self.road.neighbors_directed(switch, Direction::Incoming);
+        let mut out = self.road.neighbors_directed(switch, Direction::Outgoing);
+
+        let mut dir = Direction::Outgoing;
+
+        if ins.clone().count() == 2 {
+            if !ins.any(|node| node == default_connection) {
+                return;
+            }
+            dir = Direction::Incoming;
+        } else if out.clone().count() == 2 && !out.any(|node| node == default_connection) {
+            return;
+        }
+
+        if let Some(Node::Switch(_, _, _, def_con, old_dir)) = self.road.node_weight_mut(switch) {
+            *def_con = Some(default_connection);
+            *old_dir = dir
+        }
+    }
+
+    fn set_first_neighbour_for_switch(&mut self, switch: NodeIndex) {
+        if let Some(Node::Switch(_, _, _, Some(_), _)) = self.road.node_weight_mut(switch) {
+            return;
+        }
+
+        let mut ins = self.road.neighbors_directed(switch, Direction::Incoming);
+        let mut out = self.road.neighbors_directed(switch, Direction::Outgoing);
+
+        let mut dir = Direction::Outgoing;
+        let connection;
+
+        if ins.clone().count() == 2 {
+            connection = ins.next().unwrap();
+            dir = Direction::Incoming;
+        } else if out.clone().count() == 2 {
+            connection = out.next().unwrap();
+        } else {
+            return;
+        }
+
+        if let Some(Node::Switch(_, _, _, def_con, old_dir)) = self.road.node_weight_mut(switch) {
+            *def_con = Some(connection);
+            *old_dir = dir;
+        }
+    }
+
+    /// Builds a railroad out of this reader.
+    pub async fn build(mut self) -> Railroad {
+        {
+            let tmp_switches = self.switches.clone();
+            let switch_nodes = tmp_switches
+                .iter()
+                .flat_map(|(_address, (_switch, nodes))| nodes.iter());
+            switch_nodes.for_each(|node| self.set_first_neighbour_for_switch(*node));
+        }
+
         let road = Mutex::new(self.road);
         let trains = self
             .trains

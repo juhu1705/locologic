@@ -86,7 +86,13 @@ where
 pub enum Node {
     Signal(Address, Position),
     Sensor(Address, Position),
-    Switch(Address, Position, SwitchType, NodeIndex),
+    Switch(
+        Address,
+        Position,
+        SwitchType,
+        Option<NodeIndex>,
+        petgraph::Direction,
+    ),
     Station(Address, Position),
     Cross(Address),
     Buffer(Position),
