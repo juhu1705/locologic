@@ -122,8 +122,15 @@ impl Signal {
 
         match &self.sig_type {
             SignalType::Block => self.block_behaviour(&self.block_sensors, railroad).await,
-            SignalType::Path | SignalType::IntelligentPath => {
+            SignalType::Path => {
                 if let Some(path) = self.path_behaviour(railroad).await {
+                    Some(path)
+                } else {
+                    self.block_behaviour(&self.block_sensors, railroad).await
+                }
+            }
+            SignalType::IntelligentPath => {
+                if let Some(path) = self.intelligent_path_behaviour(railroad).await {
                     Some(path)
                 } else {
                     self.block_behaviour(&self.block_sensors, railroad).await
@@ -134,7 +141,22 @@ impl Signal {
 
     async fn path_behaviour(&self, railroad: &Railroad) -> Option<Vec<Address>> {
         let first = &self.requesters.front()?;
-        let train = railroad.get_train(first)?.lock().await.clone();
+        let train = {
+            railroad.get_train(first)?.lock().await.clone()
+        };
+        let route = train.request_route(self.address, railroad).await?;
+        if !Signal::path_free(&route, railroad, matches!(&self.sig_type, SignalType::Path)).await {
+            return None;
+        }
+
+        self.block_behaviour(&self.block_sensors, railroad).await
+    }
+
+    async fn intelligent_path_behaviour(&self, railroad: &Railroad) -> Option<Vec<Address>> {
+        let first = &self.requesters.front()?;
+        let train = {
+            railroad.get_train(first)?.lock().await.clone()
+        };
         let route = train.request_route(self.address, railroad).await?;
         if !Signal::path_free(&route, railroad, matches!(&self.sig_type, SignalType::Path)).await {
             return None;

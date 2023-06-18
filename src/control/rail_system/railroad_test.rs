@@ -1120,6 +1120,31 @@ pub async fn create_test_railroad() -> (
         .unwrap(),
     );
 
+    // Set switch default way
+    builder.set_switch_default_dir(switches[0].0, switches[1].0);
+    builder.set_switch_default_dir(switches[1].0, switches[2].0);
+    builder.set_switch_default_dir(switches[2].0, switches[3].0);
+    builder.set_switch_default_dir(switches[3].0, signals[&Address::new(87)]);
+    builder.set_switch_default_dir(switches[4].0, signals[&Address::new(92)]);
+    builder.set_switch_default_dir(switches[5].0, switches[4].0);
+    builder.set_switch_default_dir(switches[6].0, switches[5].0);
+    builder.set_switch_default_dir(switches[7].0, switches[6].0);
+    builder.set_switch_default_dir(switches[8].0, signals[&Address::new(82)]);
+
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[0].0, signals_block_a7);
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[1].0, signals_block_a4);
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[2].0, (signals[&Address::new(116)], signals[&Address::new(116)]));
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[3].0, (signals[&Address::new(83)], signals[&Address::new(83)]));
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[4].0, (signals[&Address::new(83)], signals[&Address::new(83)]));
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[5].0, signals_block_w4);
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[6].0, signals_block_w7);
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[7].0, bidirectional_switches[5].0);
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[8].0, bidirectional_switches[10].0);
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[9].0, bidirectional_switches[6].0);
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[10].0, bidirectional_switches[8].0);
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[11].0, signals_block_a17);
+    builder.set_switch_default_dir_bidirectional(bidirectional_switches[12].0, signals_block_w17);
+
     (
         builder.build().await,
         switches,

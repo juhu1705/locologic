@@ -556,25 +556,25 @@ impl Builder {
     }
 
     /// This function is automatically called at railroad building for the first connected neighbour of your switch, if you do not set it manually before.
-    pub fn set_switch_first_dir(&mut self, switch: NodeIndex, default_connection: NodeIndex) {
-        let mut ins = self.road.neighbors_directed(switch, Direction::Incoming);
-        let mut out = self.road.neighbors_directed(switch, Direction::Outgoing);
+    pub fn set_switch_default_dir(&mut self, switch: NodeIndex, default_connection: NodeIndex) {
+        let ins = self.road.neighbors_directed(switch, Direction::Incoming);
 
         let mut dir = Direction::Outgoing;
 
-        if ins.clone().count() == 2 {
-            if !ins.any(|node| node == default_connection) {
-                return;
-            }
+        if ins.count() == 2 {
             dir = Direction::Incoming;
-        } else if out.clone().count() == 2 && !out.any(|node| node == default_connection) {
-            return;
         }
 
         if let Some(Node::Switch(_, _, _, def_con, old_dir)) = self.road.node_weight_mut(switch) {
             *def_con = Some(default_connection);
             *old_dir = dir
         }
+    }
+
+    /// This function is automatically called at railroad building for the first connected neighbour of your switch, if you do not set it manually before.
+    pub fn set_switch_default_dir_bidirectional(&mut self, switch: (NodeIndex, NodeIndex), default_connection: (NodeIndex, NodeIndex)) {
+        self.set_switch_default_dir(switch.0, default_connection.0);
+        self.set_switch_default_dir(switch.1, default_connection.1);
     }
 
     fn set_first_neighbour_for_switch(&mut self, switch: NodeIndex) {
