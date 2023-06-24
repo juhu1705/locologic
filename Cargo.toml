@@ -2,7 +2,7 @@
 name = "locologic"
 version = "0.1.0"
 edition = "2021"
-authors = ["Fabius Mettner <fabius1705@live.de>"]
+authors = ["Fabius Mettner <fabius1705+locologic@live.de>"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/juhu1705/locologic"
@@ -21,3 +21,4 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "macros
 petgraph = { version = "0.6.2", features = ["serde-1"] }
 fixedbitset = "0.4.2"
 async-recursion = "1.0.2"
+async-trait = "0.1.68"

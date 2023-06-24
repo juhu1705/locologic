@@ -1,16 +1,18 @@
+use crate::control::messages::Message;
 use crate::control::rail_system::components::{
     Address, Cross, Node, Position, Rail, Sensor, Signal, SignalType, Speed, Switch, SwitchType,
 };
 use crate::control::train::Train;
 use petgraph::algo::astar;
 use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex};
-use petgraph::visit::EdgeRef;
+use petgraph::visit::{Bfs, EdgeRef};
 use petgraph::{Direction, Graph};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::Index;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::broadcast::{channel, Receiver};
+use tokio::sync::{broadcast::Sender, Mutex};
 use tokio::task::spawn_blocking;
 
 pub struct Railroad {
@@ -20,6 +22,7 @@ pub struct Railroad {
     signals: HashMap<Address, Mutex<Signal>>,
     crossings: HashMap<Address, Mutex<Cross>>,
     switches: HashMap<Address, (Mutex<Switch>, Vec<NodeIndex>)>,
+    channel: Sender<Message>,
 }
 
 impl Railroad {
@@ -34,6 +37,15 @@ impl Railroad {
 
     pub fn get_signal_mutex(&self, adr: &Address) -> Option<&Mutex<Signal>> {
         self.signals.get(adr)
+    }
+
+    pub async fn get_signal_mutex_by_index(&self, index: NodeIndex) -> Option<&Mutex<Signal>> {
+        let road = self.road().await;
+        let node = road.node_weight(index)?;
+        if let Node::Signal(adr, ..) = node {
+            return self.get_signal_mutex(adr);
+        }
+        None
     }
 
     pub async fn get_sensor_index(&self, adr: &Address, pos: &Position) -> Option<&NodeIndex> {
@@ -99,6 +111,32 @@ impl Railroad {
             None
         }
     }
+
+    /// Returns one possible input signal of a block.
+    /// This can be used, if a train is directly placed into one block,
+    /// without entering it over a specific signal.
+    pub async fn get_signal_of_block(&self, block_node: NodeIndex) -> Option<NodeIndex> {
+        let mut road = self.road().await;
+        road.reverse();
+        let mut traversal = Bfs::new(&road, block_node);
+        while let Some(node) = traversal.next(&road) {
+            if matches!(road.node_weight(node), Some(Node::Signal(..))) {
+                return Some(node);
+            }
+        }
+        None
+    }
+
+    /// Subscribes to the railroads general message channel
+    pub fn subscribe(&self) -> Receiver<Message> {
+        self.channel.subscribe()
+    }
+
+    /// Sends a message to the railroads general message channel
+    /// ignoring the possibility for now active subscribers receiving that message.
+    pub async fn send(&self, msg: Message) {
+        let _ = self.channel.send(msg);
+    }
 }
 
 fn estimate_costs(
@@ -147,6 +185,7 @@ pub struct Builder {
     signals: HashMap<Address, Signal>,
     crossings: HashMap<Address, Cross>,
     switches: HashMap<Address, (Switch, Vec<NodeIndex>)>,
+    channel: Sender<Message>,
 }
 
 impl Default for Builder {
@@ -164,6 +203,7 @@ impl Builder {
             signals: HashMap::new(),
             crossings: HashMap::new(),
             switches: HashMap::new(),
+            channel: channel(25).0,
         }
     }
 
@@ -200,6 +240,7 @@ impl Builder {
         let signals = copy_map(&railroad.signals).await;
         let crossings = copy_map(&railroad.crossings).await;
         let switches = copy_index_map(&railroad.switches).await;
+        let channel = railroad.channel.clone();
 
         Builder {
             road,
@@ -208,6 +249,7 @@ impl Builder {
             signals,
             crossings,
             switches,
+            channel,
         }
     }
 
@@ -572,7 +614,11 @@ impl Builder {
     }
 
     /// This function is automatically called at railroad building for the first connected neighbour of your switch, if you do not set it manually before.
-    pub fn set_switch_default_dir_bidirectional(&mut self, switch: (NodeIndex, NodeIndex), default_connection: (NodeIndex, NodeIndex)) {
+    pub fn set_switch_default_dir_bidirectional(
+        &mut self,
+        switch: (NodeIndex, NodeIndex),
+        default_connection: (NodeIndex, NodeIndex),
+    ) {
         self.set_switch_default_dir(switch.0, default_connection.0);
         self.set_switch_default_dir(switch.1, default_connection.1);
     }
@@ -647,6 +693,7 @@ impl Builder {
             signals,
             crossings,
             switches,
+            channel: self.channel,
         };
 
         for signal in railroad.signals.values() {

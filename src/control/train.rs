@@ -37,6 +37,18 @@ impl Train {
         }
     }
 
+    /// Resets the position of this train and reservates the corresponding signal block
+    pub async fn reset_position(&self, position: NodeIndex, rail: &Railroad) -> bool {
+        if let Some(signal_node) = rail.get_signal_of_block(position).await {
+            let signal = rail.get_signal_mutex_by_index(signal_node).await.unwrap();
+            signal.lock().await.request_block(self.address).await;
+        }
+
+        false
+    }
+
+    pub fn check_next_station(&self) {}
+
     pub fn stands(&self) -> bool {
         self.speed == Speed::Stop || self.speed == Speed::EmergencyStop
     }
@@ -79,6 +91,7 @@ impl Train {
 pub struct Station {
     arrive: Box<WaitingNode>,
     depart: Box<WaitingNode>,
+    destination: NodeIndex,
 }
 
 impl Station {
@@ -147,17 +160,17 @@ pub enum WaitingReasons {
     /// Waits a specific time
     Time(Duration),
     /// Waits until another train is on a specified sensor
-    TrainOnSensor(Train, u16),
+    TrainOnSensor(Train, Address),
     /// Waits until another train holds on a specified sensor
-    TrainHoldInStation(Train, u16),
+    TrainHoldInStation(Train, Address),
 }
 
 impl Fulfiller for WaitingReasons {
     fn fulfills(&self) -> bool {
         match self {
-            WaitingReasons::Time(_) => true,
-            WaitingReasons::TrainOnSensor(_, _) => true,
-            WaitingReasons::TrainHoldInStation(_, _) => true,
+            WaitingReasons::Time(duration) => duration.is_zero(),
+            WaitingReasons::TrainOnSensor(_train, _adr) => true,
+            WaitingReasons::TrainHoldInStation(_train, _adr) => true,
         }
     }
 }

@@ -862,14 +862,11 @@ impl Signal {
     async fn neighbours_free(index: NodeIndex, railroad: &Railroad) -> bool {
         match railroad.road().await.index(index) {
             Node::Sensor(sensor, ..) | Node::Station(sensor, ..) => {
-                if railroad
-                    .get_sensor_mutex(sensor)
-                    .unwrap()
-                    .lock()
-                    .await
-                    .status()
-                    == Status::Free
-                {
+                let is_free = {
+                    let sensor_mut = railroad.get_sensor_mutex(sensor).unwrap().lock().await;
+                    sensor_mut.status() == Status::Free
+                };
+                if is_free {
                     for neighbor in railroad.road().await.neighbors(index) {
                         if Signal::neighbours_free(neighbor, railroad).await {
                             return true;
