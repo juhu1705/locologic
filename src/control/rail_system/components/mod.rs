@@ -4,6 +4,7 @@ mod locodrive;
 /// Implementation of larger methods regarding signals
 mod signal_checks;
 
+use crate::control::messages::Message;
 use crate::control::rail_system::railroad::Railroad;
 use async_recursion::async_recursion;
 use petgraph::graph::NodeIndex;
@@ -594,6 +595,16 @@ impl Not for SwDir {
     }
 }
 
+impl From<bool> for SwDir {
+    fn from(value: bool) -> Self {
+        if value {
+            SwDir::Straight
+        } else {
+            SwDir::Curved
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Switch {
     address: Address,
@@ -607,6 +618,78 @@ impl Switch {
             address,
             dir: SwDir::Straight,
             updated: false,
+        }
+    }
+
+    /// Moves this switch in the correct orientation, so the requested way could be driven.
+    /// This function can return before the actual switch is completely performed.
+    /// Please use the [Switch::switch_in_correct_state] Method to check
+    /// if the switch already performed it's switch operation in the correct state,
+    /// else you may wait until the switch is performed completely.
+    pub async fn request_path(
+        &mut self,
+        switch_node: NodeIndex,
+        from_index: NodeIndex,
+        to_index: NodeIndex,
+        railroad: &Railroad,
+    ) {
+        if let Some(Node::Switch(_adr, _pos, _s_type, some_node, _dir)) =
+            railroad.road().await.node_weight(switch_node)
+        {
+            if let Some(node) = some_node {
+                self.switch(
+                    SwDir::from(from_index == *node || to_index == *node),
+                    railroad,
+                )
+                .await;
+            } else {
+                self.switch(SwDir::Curved, railroad).await;
+            }
+        }
+    }
+
+    /// Checks if the switch is in the correct state to pass.
+    pub async fn switch_in_correct_state(
+        &self,
+        switch_node: NodeIndex,
+        from_index: NodeIndex,
+        to_index: NodeIndex,
+        railroad: &Railroad,
+    ) -> bool {
+        if let Some(Node::Switch(_adr, _pos, _s_type, some_node, _dir)) =
+            railroad.road().await.node_weight(switch_node)
+        {
+            let test_dir = if let Some(node) = some_node {
+                SwDir::from(from_index == *node || to_index == *node)
+            } else {
+                SwDir::Curved
+            };
+            self.dir == test_dir && self.updated
+        } else {
+            false
+        }
+    }
+
+    /// Requests a switching of this switch to the requested direction,
+    /// if the switch is not already directed correctly.
+    pub async fn switch(&mut self, dir: SwDir, railroad: &Railroad) {
+        if self.dir == dir && self.updated {
+            return;
+        }
+
+        self.updated = false;
+        let message = Message::Switch(self.address, dir);
+        railroad.send(message).await;
+    }
+
+    /// Marks the current switch state as correct.
+    /// Note: This method may later be private depending on further implementations.
+    pub async fn ack_switch_state(&mut self, dir: SwDir, railroad: &Railroad) {
+        if dir == self.dir {
+            self.updated = true;
+        } else {
+            self.updated = false;
+            self.switch(self.dir, railroad).await;
         }
     }
 
