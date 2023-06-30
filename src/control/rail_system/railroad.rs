@@ -31,6 +31,31 @@ impl Railroad {
         self.road.lock().await.clone()
     }
 
+    pub async fn create_train(
+        &mut self,
+        address: Address,
+        position: NodeIndex,
+    ) -> Option<&Mutex<Train>> {
+        let t = Train::new(address, position);
+
+        let mut sensor = match self.road.lock().await.node_weight_mut(position)? {
+            Node::Sensor(adr, ..) | Node::Station(adr, ..) => self.sensors.get(adr)?.0.lock().await,
+            _ => {
+                return None;
+            }
+        };
+
+        if !sensor.block(address) {
+            return None;
+        }
+
+        let train = Mutex::new(t);
+
+        self.trains.insert(address, train);
+
+        self.trains.get(&address)
+    }
+
     pub fn get_sensor_mutex(&self, adr: &Address) -> Option<&Mutex<Sensor>> {
         Some(&self.sensors.get(adr)?.0)
     }
@@ -251,10 +276,6 @@ impl Builder {
             switches,
             channel,
         }
-    }
-
-    pub fn add_train(&mut self, train: Train) {
-        self.trains.insert(train.address(), train);
     }
 
     pub fn add_sensors(

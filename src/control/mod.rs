@@ -1,5 +1,5 @@
 /// Only available, when  locodrive  dependency is activated.
-#[cfg(locodrive)]
+#[cfg(feature = "locodrive")]
 pub mod locodrive_connector;
 /// The messages that can be send to and received from the rail system.
 pub mod messages;

@@ -61,9 +61,9 @@ impl LocoDriveConnector {
                 Message::TrainSpeed(adr, speed) => self
                     .lookup_slot(adr)
                     .await
-                    .map(|slot| locodrive::protocol::Message::LocoSpd(slot, convert_speed(speed))),
+                    .map(|slot| locodrive::protocol::Message::LocoSpd(slot, SpeedArg::from(speed))),
                 Message::Switch(adr, dir) => Some(locodrive::protocol::Message::SwReq(
-                    SwitchArg::new(adr.address(), convert_dir(dir), false),
+                    SwitchArg::new(adr.address(), SwitchDirection::from(dir), false),
                 )),
                 _ => None,
             }
@@ -98,17 +98,21 @@ pub fn run_loconet_connector(
     tokio::spawn(run_connector(actor));
 }
 
-fn convert_speed(speed: Speed) -> SpeedArg {
-    match speed {
-        Speed::EmergencyStop => SpeedArg::EmergencyStop,
-        Speed::Stop => SpeedArg::Stop,
-        Speed::Drive(spd) => SpeedArg::Drive(spd),
+impl From<Speed> for SpeedArg {
+    fn from(speed: Speed) -> Self {
+        match speed {
+            Speed::EmergencyStop => SpeedArg::EmergencyStop,
+            Speed::Stop => SpeedArg::Stop,
+            Speed::Drive(spd) => SpeedArg::Drive(spd),
+        }
     }
 }
 
-fn convert_dir(dir: SwDir) -> SwitchDirection {
-    match dir {
-        SwDir::Straight => SwitchDirection::Straight,
-        SwDir::Curved => SwitchDirection::Curved,
+impl From<SwDir> for SwitchDirection {
+    fn from(dir: SwDir) -> Self {
+        match dir {
+            SwDir::Straight => SwitchDirection::Straight,
+            SwDir::Curved => SwitchDirection::Curved,
+        }
     }
 }

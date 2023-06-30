@@ -1,6 +1,7 @@
 use crate::control::rail_system::components::{Address, Node, Speed};
 use crate::control::rail_system::railroad::Railroad;
 use petgraph::graph::NodeIndex;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -9,7 +10,7 @@ pub struct Clock {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-/// Represents one train
+/// Represents one train, please create by calling [Railroad::create_train]
 pub struct Train {
     /// The TRAIN'S address
     address: Address,
@@ -20,13 +21,13 @@ pub struct Train {
     /// The train's position
     position: NodeIndex,
     /// Controls the driving process
-    route: Option<Vec<NodeIndex>>,
+    route: Option<Vec<(NodeIndex, bool)>>,
     /// Controls the driving table
     timetable: Vec<Station>,
 }
 
 impl Train {
-    pub fn new(address: Address, position: NodeIndex) -> Self {
+    pub(crate) fn new(address: Address, position: NodeIndex) -> Self {
         Train {
             address,
             actual_speed: Speed::Stop,
@@ -47,7 +48,26 @@ impl Train {
         false
     }
 
+    /// TODO: Implement
     pub fn check_next_station(&self) {}
+
+    pub async fn trigger_drive_to(
+        &mut self,
+        destination: NodeIndex,
+        railroad: Arc<Railroad>,
+    ) -> bool {
+        let route = Railroad::shortest_path(railroad, self.position, destination).await;
+
+        let route = if let Some(route) = route {
+            route.1.into_iter().map(|index| (index, false)).collect()
+        } else {
+            return false;
+        };
+
+        self.route = Some(route);
+
+        true
+    }
 
     pub fn stands(&self) -> bool {
         self.speed == Speed::Stop || self.speed == Speed::EmergencyStop
@@ -65,21 +85,23 @@ impl Train {
         let route = self.route.as_ref()?;
 
         let road = railroad.road().await;
-        let index = route.iter().position(|&r| match road.node_weight(r) {
-            Some(Node::Signal(adr, ..)) => *adr == signal,
-            _ => false,
-        })?;
+        let index = route
+            .iter()
+            .position(|&(index, _)| match road.node_weight(index) {
+                Some(Node::Signal(adr, ..)) => *adr == signal,
+                _ => false,
+            })?;
 
         let end = if let Some(i) = route[(index + 1)..]
             .iter()
-            .position(|&r| matches!(road.node_weight(r), Some(Node::Signal(..))))
+            .position(|&(index, _)| matches!(road.node_weight(index), Some(Node::Signal(..))))
         {
             i + index + 2
         } else {
             route.len()
         };
 
-        let vec: Vec<&NodeIndex> = route[index..end].iter().clone().collect();
+        let vec: Vec<&NodeIndex> = route[index..end].iter().map(|(x, _)| x).clone().collect();
         Some(vec)
     }
 

@@ -574,8 +574,8 @@ pub enum SwitchType {
     LeftStraight180 = 7,
     LeftRight90 = 8,
     LeftRight180 = 9,
-    RightLeft90 = 0xA,
-    RightLeft180 = 0xB,
+    RightLeft90 = 10,
+    RightLeft180 = 11,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
