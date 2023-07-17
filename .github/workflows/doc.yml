@@ -36,7 +36,7 @@ jobs:
       - name: Add index page
         run: echo "<meta http-equiv=\"refresh\" content=\"0; url=doc/locologic\">" > ./_site/index.html
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v1
+        uses: actions/upload-pages-artifact@v2
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v2
