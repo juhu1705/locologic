@@ -35,6 +35,11 @@ jobs:
         run: cargo doc --all-features --no-deps --target-dir "./_site"
       - name: Add index page
         run: echo "<meta http-equiv=\"refresh\" content=\"0; url=doc/locologic\">" > ./_site/index.html
+      - name: Fix permissions
+        run: |
+          chmod -c -R +rX "_site/" | while read line; do
+            echo "::warning title=Invalid file permissions automatically fixed::$line"
+          done
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v2
       - name: Deploy to GitHub Pages
