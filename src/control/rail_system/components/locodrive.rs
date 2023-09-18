@@ -11,20 +11,22 @@ impl Address<u16> {
     }
 }
 
-impl Speed<u8> {
-    pub fn get_speed(&self) -> SpeedArg {
-        match *self {
-            Speed::Stop => SpeedArg::Stop,
-            Speed::EmergencyStop => SpeedArg::EmergencyStop,
-            Speed::Drive(spd) => SpeedArg::Drive(spd),
-        }
-    }
-
-    pub fn from_arg(spd: &SpeedArg) -> Self {
-        match *spd {
+impl From<SpeedArg> for Speed<u8> {
+    fn from(spd: SpeedArg) -> Self {
+        match spd {
             SpeedArg::Stop => Speed::Stop,
             SpeedArg::EmergencyStop => Speed::EmergencyStop,
             SpeedArg::Drive(spd) => Speed::Drive(spd),
+        }
+    }
+}
+
+impl From<Speed<u8>> for SpeedArg {
+    fn from(spd: Speed<u8>) -> Self {
+        match spd {
+            Speed::Stop => SpeedArg::Stop,
+            Speed::EmergencyStop => SpeedArg::EmergencyStop,
+            Speed::Drive(spd) => SpeedArg::Drive(spd),
         }
     }
 }

@@ -3,6 +3,7 @@ use crate::control::rail_system::components::{
     Address, Cross, Node, Position, Rail, Sensor, Signal, SignalType, Speed, Switch, SwitchType,
 };
 use crate::control::train::Train;
+use crate::general::{AddressType, DefaultAddressType, DefaultSpeedType, SpeedType};
 use petgraph::algo::astar;
 use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex};
 use petgraph::visit::{Bfs, EdgeRef};
@@ -15,27 +16,52 @@ use tokio::sync::broadcast::{channel, Receiver};
 use tokio::sync::{broadcast::Sender, Mutex};
 use tokio::task::spawn_blocking;
 
-pub struct Railroad {
-    road: Mutex<DiGraph<Node, Vec<Rail>>>,
-    trains: HashMap<Address, Mutex<Train>>,
-    sensors: HashMap<Address, (Mutex<Sensor>, Vec<NodeIndex>)>,
-    signals: HashMap<Address, Mutex<Signal>>,
-    crossings: HashMap<Address, Mutex<Cross>>,
-    switches: HashMap<Address, (Mutex<Switch>, Vec<NodeIndex>)>,
-    channel: Sender<Message>,
+type Road<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr> = Mutex<DiGraph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>>;
+type Trains<Spd, TrainAddr> = HashMap<Address<TrainAddr>, Mutex<Train<Spd, TrainAddr>>>;
+type Sensors<Spd, SensorAddr, TrainAddr> = HashMap<Address<SensorAddr>, (Mutex<Sensor<Spd, SensorAddr, TrainAddr>>, Vec<NodeIndex>)>;
+type Signals<SignalAddr, TrainAddr, SensorAddr> = HashMap<Address<SignalAddr>, Mutex<Signal<SignalAddr, TrainAddr, SensorAddr>>>;
+type Crossings<CrossingAddr> = HashMap<Address<CrossingAddr>, Mutex<Cross<CrossingAddr>>>;
+type Switches<SwitchAddr> = HashMap<Address<SwitchAddr>, (Mutex<Switch<SwitchAddr>>, Vec<NodeIndex>)>;
+type Channel<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr> = Sender<Message<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>>;
+
+pub struct Railroad<
+    Spd: SpeedType = DefaultSpeedType,
+    TrainAddr: AddressType = DefaultAddressType,
+    SensorAddr: AddressType = DefaultAddressType,
+    SwitchAddr: AddressType = DefaultAddressType,
+    SignalAddr: AddressType = DefaultAddressType,
+    CrossingAddr: AddressType = DefaultAddressType,
+> {
+    road: Road<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    trains: Trains<Spd, TrainAddr>,
+    sensors: Sensors<Spd, SensorAddr, TrainAddr>,
+    signals: Signals<SignalAddr, TrainAddr, SensorAddr>,
+    crossings: Crossings<CrossingAddr>,
+    switches: Switches<SwitchAddr>,
+    channel: Channel<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>,
 }
 
-impl Railroad {
+impl<
+        Spd: SpeedType,
+        TrainAddr: AddressType,
+        SensorAddr: AddressType,
+        SwitchAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    > Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>
+{
     /// Returns a **clone** of the railroad
-    pub async fn road(&self) -> DiGraph<Node, Vec<Rail>> {
+    pub async fn road(
+        &self,
+    ) -> DiGraph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>> {
         self.road.lock().await.clone()
     }
 
     pub async fn create_train(
         &mut self,
-        address: Address,
+        address: Address<TrainAddr>,
         position: NodeIndex,
-    ) -> Option<&Mutex<Train>> {
+    ) -> Option<&Mutex<Train<Spd, TrainAddr>>> {
         let t = Train::new(address, position);
 
         let mut sensor = match self.road.lock().await.node_weight_mut(position)? {
@@ -56,15 +82,24 @@ impl Railroad {
         self.trains.get(&address)
     }
 
-    pub fn get_sensor_mutex(&self, adr: &Address) -> Option<&Mutex<Sensor>> {
+    pub fn get_sensor_mutex(
+        &self,
+        adr: &Address<SensorAddr>,
+    ) -> Option<&Mutex<Sensor<Spd, SensorAddr, TrainAddr>>> {
         Some(&self.sensors.get(adr)?.0)
     }
 
-    pub fn get_signal_mutex(&self, adr: &Address) -> Option<&Mutex<Signal>> {
+    pub fn get_signal_mutex(
+        &self,
+        adr: &Address<SignalAddr>,
+    ) -> Option<&Mutex<Signal<SignalAddr, TrainAddr, SensorAddr>>> {
         self.signals.get(adr)
     }
 
-    pub async fn get_signal_mutex_by_index(&self, index: NodeIndex) -> Option<&Mutex<Signal>> {
+    pub async fn get_signal_mutex_by_index(
+        &self,
+        index: NodeIndex,
+    ) -> Option<&Mutex<Signal<SignalAddr, TrainAddr, SensorAddr>>> {
         let road = self.road().await;
         let node = road.node_weight(index)?;
         if let Node::Signal(adr, ..) = node {
@@ -73,21 +108,29 @@ impl Railroad {
         None
     }
 
-    pub async fn get_sensor_index(&self, adr: &Address, pos: &Position) -> Option<&NodeIndex> {
+    pub async fn get_sensor_index(
+        &self,
+        adr: &Address<SensorAddr>,
+        pos: &Position,
+    ) -> Option<&NodeIndex> {
         let road = self.road().await;
         self.sensors
             .get(adr)?
             .1
             .iter()
             .find(|ind| match *road.index(**ind) {
-                Node::Signal(adr_check, pos_check) | Node::Station(adr_check, pos_check) => {
+                Node::Sensor(adr_check, pos_check) | Node::Station(adr_check, pos_check) => {
                     adr_check == *adr && pos_check == *pos
                 }
                 _ => false,
             })
     }
 
-    pub async fn get_switch_index(&self, adr: &Address, pos: &Position) -> Option<&NodeIndex> {
+    pub async fn get_switch_index(
+        &self,
+        adr: &Address<SwitchAddr>,
+        pos: &Position,
+    ) -> Option<&NodeIndex> {
         let road = self.road().await;
         self.switches
             .get(adr)?
@@ -99,15 +142,21 @@ impl Railroad {
             })
     }
 
-    pub fn get_train(&self, adr: &Address) -> Option<&Mutex<Train>> {
+    pub fn get_train(&self, adr: &Address<TrainAddr>) -> Option<&Mutex<Train<Spd, TrainAddr>>> {
         self.trains.get(adr)
     }
 
-    pub fn get_switch_mutex(&self, adr: &Address) -> Option<&Mutex<Switch>> {
+    pub fn get_switch_mutex(
+        &self,
+        adr: &Address<SwitchAddr>,
+    ) -> Option<&Mutex<Switch<SwitchAddr>>> {
         Some(&self.switches.get(adr)?.0)
     }
 
-    pub fn get_crossing_mutex(&self, adr: &Address) -> Option<&Mutex<Cross>> {
+    pub fn get_crossing_mutex(
+        &self,
+        adr: &Address<CrossingAddr>,
+    ) -> Option<&Mutex<Cross<CrossingAddr>>> {
         self.crossings.get(adr)
     }
 
@@ -153,21 +202,30 @@ impl Railroad {
     }
 
     /// Subscribes to the railroads general message channel
-    pub fn subscribe(&self) -> Receiver<Message> {
+    pub fn subscribe(
+        &self,
+    ) -> Receiver<Message<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>> {
         self.channel.subscribe()
     }
 
     /// Sends a message to the railroads general message channel
     /// ignoring the possibility for now active subscribers receiving that message.
-    pub async fn send(&self, msg: Message) {
+    pub async fn send(&self, msg: Message<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>) {
         let _ = self.channel.send(msg);
     }
 }
 
-fn estimate_costs(
-    graph: &Graph<Node, Vec<Rail>>,
+fn estimate_costs<
+    Spd: SpeedType,
+    TrainAddr: AddressType,
+    SensorAddr: AddressType,
+    SwitchAddr: AddressType,
+    SignalAddr: AddressType,
+    CrossingAddr: AddressType,
+>(
+    graph: &Graph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>,
     node: NodeIndex,
-    rail: Arc<Railroad>,
+    rail: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
     dest: NodeIndex,
 ) -> usize {
     let node_pos = graph.index(node).position(&rail);
@@ -176,8 +234,29 @@ fn estimate_costs(
     node_pos.coord().manhattan_distance(&dest_pos.coord())
 }
 
-fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad>) -> usize {
-    fn train_cost(sensor_adr: &Address, rail: Arc<Railroad>) -> Option<usize> {
+fn node_cost<
+    Spd: SpeedType,
+    TrainAddr: AddressType,
+    SensorAddr: AddressType,
+    SwitchAddr: AddressType,
+    SignalAddr: AddressType,
+    CrossingAddr: AddressType,
+>(
+    graph: &Graph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>,
+    node: NodeIndex,
+    rail: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+) -> usize {
+    fn train_cost<
+        Spd: SpeedType,
+        TrainAddr: AddressType,
+        SensorAddr: AddressType,
+        SwitchAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        sensor_adr: &Address<SensorAddr>,
+        rail: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+    ) -> Option<usize> {
         let train = {
             let sensor_mut = rail.get_sensor_mutex(sensor_adr)?;
             (*(sensor_mut.blocking_lock()).train())?
@@ -203,26 +282,52 @@ fn node_cost(graph: &Graph<Node, Vec<Rail>>, node: NodeIndex, rail: Arc<Railroad
     }
 }
 
-pub struct Builder {
-    road: DiGraph<Node, Vec<Rail>>,
-    trains: HashMap<Address, Train>,
-    sensors: HashMap<Address, (Sensor, Vec<NodeIndex>)>,
-    signals: HashMap<Address, Signal>,
-    crossings: HashMap<Address, Cross>,
-    switches: HashMap<Address, (Switch, Vec<NodeIndex>)>,
-    channel: Sender<Message>,
+type BuilderSensors<Spd, SensorAddr, TrainAddr> = HashMap<Address<SensorAddr>, (Sensor<Spd, SensorAddr, TrainAddr>, Vec<NodeIndex>)>;
+
+pub struct Builder<
+    Spd: SpeedType,
+    TrainAddr: AddressType,
+    SensorAddr: AddressType,
+    SwitchAddr: AddressType,
+    SignalAddr: AddressType,
+    CrossingAddr: AddressType,
+> {
+    road: DiGraph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>,
+    trains: HashMap<Address<TrainAddr>, Train<Spd, TrainAddr>>,
+    sensors: BuilderSensors<Spd, SensorAddr, TrainAddr>,
+    signals: HashMap<Address<SignalAddr>, Signal<SignalAddr, TrainAddr, SensorAddr>>,
+    crossings: HashMap<Address<CrossingAddr>, Cross<CrossingAddr>>,
+    switches: HashMap<Address<SwitchAddr>, (Switch<SwitchAddr>, Vec<NodeIndex>)>,
+    channel: Sender<Message<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>>,
 }
 
-impl Default for Builder {
+impl<
+        Spd: SpeedType,
+        TrainAddr: AddressType,
+        SensorAddr: AddressType,
+        SwitchAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    > Default for Builder<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Builder {
+impl<
+        Spd: SpeedType,
+        TrainAddr: AddressType,
+        SensorAddr: AddressType,
+        SwitchAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    > Builder<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>
+{
     pub fn new() -> Self {
         Builder {
-            road: DiGraph::<Node, Vec<Rail>>::new(),
+            road: DiGraph::<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>::new(
+            ),
             trains: HashMap::new(),
             sensors: HashMap::new(),
             signals: HashMap::new(),
@@ -232,7 +337,9 @@ impl Builder {
         }
     }
 
-    pub async fn from_railroad(railroad: &Railroad) -> Self {
+    pub async fn from_railroad(
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) -> Self {
         let road = railroad.road.lock().await.clone();
 
         async fn copy_map<R, T>(input: &HashMap<R, Mutex<T>>) -> HashMap<R, T>
@@ -260,7 +367,21 @@ impl Builder {
             map
         }
 
-        let trains = copy_map(&railroad.trains).await;
+        async fn copy_trains<R, Spd: SpeedType, TrainAddr: AddressType>(
+            input: &HashMap<R, Mutex<Train<Spd, TrainAddr>>>,
+        ) -> HashMap<R, Train<Spd, TrainAddr>>
+        where
+            R: Clone + Hash + Eq,
+        {
+            let mut map = HashMap::new();
+            for i in input {
+                let old = i.1.lock().await;
+                map.insert(i.0.clone(), Train::new(old.address(), old.position()));
+            }
+            map
+        }
+
+        let trains = copy_trains(&railroad.trains).await;
         let sensors = copy_index_map(&railroad.sensors).await;
         let signals = copy_map(&railroad.signals).await;
         let crossings = copy_map(&railroad.crossings).await;
@@ -280,8 +401,8 @@ impl Builder {
 
     pub fn add_sensors(
         &mut self,
-        sensors: &[(Address, Speed, Position)],
-    ) -> Vec<(NodeIndex, Address)> {
+        sensors: &[(Address<SensorAddr>, Speed<Spd>, Position)],
+    ) -> Vec<(NodeIndex, Address<SensorAddr>)> {
         sensors
             .iter()
             .map(|(s_adr, max_speed, s_pos)| (self.add_sensor(*s_adr, *max_speed, *s_pos), *s_adr))
@@ -290,8 +411,8 @@ impl Builder {
 
     pub fn add_bidirectional_sensors(
         &mut self,
-        sensors: &[(Address, Speed, Position)],
-    ) -> Vec<((NodeIndex, NodeIndex), Address)> {
+        sensors: &[(Address<SensorAddr>, Speed<Spd>, Position)],
+    ) -> Vec<((NodeIndex, NodeIndex), Address<SensorAddr>)> {
         sensors
             .iter()
             .map(|(s_adr, max_speed, s_pos)| {
@@ -305,8 +426,8 @@ impl Builder {
 
     pub fn add_sensor(
         &mut self,
-        sensor: Address,
-        max_speed: Speed,
+        sensor: Address<SensorAddr>,
+        max_speed: Speed<Spd>,
         position: Position,
     ) -> NodeIndex {
         let node = self.road.add_node(Node::Sensor(sensor, position));
@@ -323,8 +444,8 @@ impl Builder {
 
     pub fn add_bidirectional_sensor(
         &mut self,
-        sensor: Address,
-        max_speed: Speed,
+        sensor: Address<SensorAddr>,
+        max_speed: Speed<Spd>,
         position: Position,
     ) -> (NodeIndex, NodeIndex) {
         let node = self.road.add_node(Node::Sensor(sensor, position));
@@ -345,8 +466,8 @@ impl Builder {
 
     pub fn add_stations(
         &mut self,
-        stations: &[(Address, Speed, Position)],
-    ) -> Vec<(NodeIndex, Address)> {
+        stations: &[(Address<SensorAddr>, Speed<Spd>, Position)],
+    ) -> Vec<(NodeIndex, Address<SensorAddr>)> {
         stations
             .iter()
             .map(|station| (self.add_station(station.0, station.1, station.2), station.0))
@@ -355,8 +476,8 @@ impl Builder {
 
     pub fn add_bidirectional_stations(
         &mut self,
-        stations: &[(Address, Speed, Position)],
-    ) -> Vec<((NodeIndex, NodeIndex), Address)> {
+        stations: &[(Address<SensorAddr>, Speed<Spd>, Position)],
+    ) -> Vec<((NodeIndex, NodeIndex), Address<SensorAddr>)> {
         stations
             .iter()
             .map(|(s_adr, max_speed, s_pos)| {
@@ -370,8 +491,8 @@ impl Builder {
 
     pub fn add_station(
         &mut self,
-        station: Address,
-        max_speed: Speed,
+        station: Address<SensorAddr>,
+        max_speed: Speed<Spd>,
         position: Position,
     ) -> NodeIndex {
         let index = self.road.add_node(Node::Station(station, position));
@@ -388,8 +509,8 @@ impl Builder {
 
     pub fn add_bidirectional_station(
         &mut self,
-        station: Address,
-        max_speed: Speed,
+        station: Address<SensorAddr>,
+        max_speed: Speed<Spd>,
         position: Position,
     ) -> (NodeIndex, NodeIndex) {
         let index = self.road.add_node(Node::Station(station, position));
@@ -410,8 +531,8 @@ impl Builder {
 
     pub fn add_signals(
         &mut self,
-        signals: &[(Address, SignalType, Position)],
-    ) -> HashMap<Address, NodeIndex> {
+        signals: &[(Address<SignalAddr>, SignalType, Position)],
+    ) -> HashMap<Address<SignalAddr>, NodeIndex> {
         signals
             .iter()
             .filter_map(|signal| Some((signal.0, self.add_signal(signal.0, signal.1, signal.2)?)))
@@ -420,7 +541,7 @@ impl Builder {
 
     pub fn add_signal(
         &mut self,
-        signal: Address,
+        signal: Address<SignalAddr>,
         signal_type: SignalType,
         position: Position,
     ) -> Option<NodeIndex> {
@@ -437,7 +558,7 @@ impl Builder {
 
     pub fn add_crossing(
         &mut self,
-        cross: Address,
+        cross: Address<CrossingAddr>,
         pos: Position,
     ) -> Option<(NodeIndex, NodeIndex)> {
         if self.crossings.get(&cross).is_some() {
@@ -455,8 +576,8 @@ impl Builder {
 
     pub fn add_switches(
         &mut self,
-        switches: &[(Address, Position, SwitchType)],
-    ) -> Vec<(NodeIndex, Address)> {
+        switches: &[(Address<SwitchAddr>, Position, SwitchType)],
+    ) -> Vec<(NodeIndex, Address<SwitchAddr>)> {
         switches
             .iter()
             .map(|switch| (self.add_switch(switch.0, switch.1, switch.2), switch.0))
@@ -465,8 +586,8 @@ impl Builder {
 
     pub fn add_bidirectional_switches(
         &mut self,
-        switches: &[(Address, Position, SwitchType)],
-    ) -> Vec<((NodeIndex, NodeIndex), Address)> {
+        switches: &[(Address<SwitchAddr>, Position, SwitchType)],
+    ) -> Vec<((NodeIndex, NodeIndex), Address<SwitchAddr>)> {
         switches
             .iter()
             .map(|switch| {
@@ -480,7 +601,7 @@ impl Builder {
 
     pub fn add_switch(
         &mut self,
-        switch: Address,
+        switch: Address<SwitchAddr>,
         position: Position,
         s_type: SwitchType,
     ) -> NodeIndex {
@@ -504,7 +625,7 @@ impl Builder {
 
     pub fn add_bidirectional_switch(
         &mut self,
-        switch: Address,
+        switch: Address<SwitchAddr>,
         position: Position,
         s_type: SwitchType,
     ) -> (NodeIndex, NodeIndex) {
@@ -534,25 +655,25 @@ impl Builder {
         (index, index_reverse)
     }
 
-    pub fn remove_train(&mut self, adr: &Address) {
+    pub fn remove_train(&mut self, adr: &Address<TrainAddr>) {
         self.trains.remove(adr);
     }
 
-    pub fn remove_sensor(&mut self, adr: &Address) {
+    pub fn remove_sensor(&mut self, adr: &Address<SensorAddr>) {
         self.sensors.remove(adr);
     }
 
-    pub fn remove_signal(&mut self, adr: &Address) {
+    pub fn remove_signal(&mut self, adr: &Address<SignalAddr>) {
         if let Some(signal) = self.signals.remove(adr) {
             self.road.remove_node(signal.representing_node());
         }
     }
 
-    pub fn remove_crossing(&mut self, adr: &Address) {
+    pub fn remove_crossing(&mut self, adr: &Address<CrossingAddr>) {
         self.crossings.remove(adr);
     }
 
-    pub fn remove_switch(&mut self, adr: &Address) {
+    pub fn remove_switch(&mut self, adr: &Address<SwitchAddr>) {
         self.switches.remove(adr);
     }
 
@@ -671,7 +792,9 @@ impl Builder {
     }
 
     /// Builds a railroad out of this reader.
-    pub async fn build(mut self) -> Railroad {
+    pub async fn build(
+        mut self,
+    ) -> Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr> {
         {
             let tmp_switches = self.switches.clone();
             let switch_nodes = tmp_switches

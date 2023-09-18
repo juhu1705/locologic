@@ -4,8 +4,73 @@ use crate::control::rail_system::components::{
 use crate::control::rail_system::railroad::{Builder, Railroad};
 use petgraph::graph::NodeIndex;
 use std::collections::HashMap;
-use std::sync::Arc;
 
+/// Sensors:
+///
+/// | Index  | Adresse |
+/// |--------|---------|
+/// | 0      | 0       |
+/// | 1      | 1       |
+/// | 2      | 8       |
+/// | 3      | 9       |
+/// | 4      | 10      |
+/// | 5      | 11      |
+/// | 6      | 12      |
+/// | 7      | 19      |
+///
+/// Bidirectional Sensors:
+///
+/// | Index | Address |
+/// |-------|---------|
+/// | 0     | 2       |
+/// | 1     | 3       |
+/// | 2     | 4       |
+/// | 3     | 5       |
+/// | 4     | 6       |
+/// | 5     | 7       |
+/// | 6     | 13      |
+/// | 7     | 14 (L)  |
+/// | 8     | 14 (R)  |
+/// | 9     | 15      |
+/// | 10    | 16      |
+/// | 11    | 17      |
+/// | 12    | 18      |
+///
+/// Switches:
+///
+/// | Index | Switch |
+/// |-------|--------|
+/// | 0     | 1      |
+/// | 1     | 2      |
+/// | 2     | 3      |
+/// | 3     | 4      |
+/// | 4     | 5      |
+/// | 5     | 6      |
+/// | 6     | 7      |
+/// | 7     | 8      |
+/// | 8     | 14     |
+///
+/// Bidirectional Switches:
+///
+/// | Index | Switch |
+/// |-------|--------|
+/// | 0     | 9      |
+/// | 1     | 10     |
+/// | 2     | 11     |
+/// | 3     | 12     |
+/// | 4     | 13     |
+/// | 5     | 15     |
+/// | 6     | 16     |
+/// | 7     | 17 (I) |
+/// | 8     | 17 (A) |
+/// | 9     | 18 (I) |
+/// | 10    | 18 (A) |
+/// | 11    | 19     |
+/// | 12    | 20     |
+///
+/// Signals:
+///
+/// x -> x + 80 for x in (0..35)
 pub async fn create_test_railroad() -> (
     Railroad,
     Vec<(NodeIndex, Address)>,
@@ -462,70 +527,6 @@ pub async fn create_test_railroad() -> (
             Position::new(Coord(2, 8, 0), Direction::West),
         ),
     ]);
-
-    /*
-    Sensors:
-    | Index  | Adresse |
-    |--------|---------|
-    | 0      | 0       |
-    | 1      | 1       |
-    | 2      | 8       |
-    | 3      | 9       |
-    | 4      | 10      |
-    | 5      | 11      |
-    | 6      | 12      |
-    | 7      | 19      |
-
-    Bidirectional Sensors:
-    | Index | Address |
-    |-------|---------|
-    | 0     | 2       |
-    | 1     | 3       |
-    | 2     | 4       |
-    | 3     | 5       |
-    | 4     | 6       |
-    | 5     | 7       |
-    | 6     | 13      |
-    | 7     | 14 (L)  |
-    | 8     | 14 (R)  |
-    | 9     | 15      |
-    | 10    | 16      |
-    | 11    | 17      |
-    | 12    | 18      |
-
-    Switches:
-    | Index | Switch |
-    |-------|--------|
-    | 0     | 1      |
-    | 1     | 2      |
-    | 2     | 3      |
-    | 3     | 4      |
-    | 4     | 5      |
-    | 5     | 6      |
-    | 6     | 7      |
-    | 7     | 8      |
-    | 8     | 14     |
-
-    Bidirectional Switches:
-    | Index | Switch |
-    |-------|--------|
-    | 0     | 9      |
-    | 1     | 10     |
-    | 2     | 11     |
-    | 3     | 12     |
-    | 4     | 13     |
-    | 5     | 15     |
-    | 6     | 16     |
-    | 7     | 17 (I) |
-    | 8     | 17 (A) |
-    | 9     | 18 (I) |
-    | 10    | 18 (A) |
-    | 11    | 19     |
-    | 12    | 20     |
-
-    Signals:
-    x -> x + 80 for x in (0..35)
-    */
 
     // Schattenbahnhof
 
@@ -1178,6 +1179,8 @@ pub async fn create_test_railroad() -> (
 
 #[tokio::test]
 pub async fn test_road() {
+    use std::sync::Arc;
+
     let (r, switches, bi_dir_switches, sensors, bi_dir_sensors, signals) =
         create_test_railroad().await;
 

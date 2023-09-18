@@ -3,8 +3,8 @@ use fixedbitset::FixedBitSet;
 use petgraph::graph::DiGraph;
 use tokio::sync::MutexGuard;
 
-fn handle_cross_route(
-    cross: MutexGuard<Cross>,
+fn handle_cross_route<CrossingAddr: AddressType>(
+    cross: MutexGuard<Cross<CrossingAddr>>,
     parent_node: &NodeIndex,
     stack: &mut VecDeque<NodeIndex>,
 ) {
@@ -15,12 +15,19 @@ fn handle_cross_route(
     }
 }
 
-async fn handle_found_node(
+async fn handle_found_node<
+    Spd: SpeedType,
+    TrainAddr: AddressType,
+    SensorAddr: AddressType,
+    SwitchAddr: AddressType,
+    SignalAddr: AddressType,
+    CrossingAddr: AddressType,
+>(
     stack: &mut VecDeque<NodeIndex>,
     succ: NodeIndex,
     parent_node: &NodeIndex,
-    graph: &DiGraph<Node, Vec<Rail>>,
-    railroad: &Railroad,
+    graph: &DiGraph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>,
+    railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
 ) {
     stack.push_back(succ);
     if let Some(Node::Cross(adr)) = graph.node_weight(*parent_node) {
@@ -30,14 +37,21 @@ async fn handle_found_node(
     }
 }
 
-async fn handle_successor(
+async fn handle_successor<
+    Spd: SpeedType,
+    TrainAddr: AddressType,
+    SensorAddr: AddressType,
+    SwitchAddr: AddressType,
+    SignalAddr: AddressType,
+    CrossingAddr: AddressType,
+>(
     stack: &mut VecDeque<NodeIndex>,
     (succ, parent_node): (NodeIndex, NodeIndex),
-    graph: &DiGraph<Node, Vec<Rail>>,
-    railroad: &Railroad,
+    graph: &DiGraph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>,
+    railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
     discovered: &mut FixedBitSet,
     signal: &NodeIndex,
-    in_signals: &mut Vec<Address>,
+    in_signals: &mut Vec<Address<SignalAddr>>,
 ) {
     if discovered.visit(succ) {
         return;
@@ -59,13 +73,20 @@ async fn handle_successor(
     }
 }
 
-async fn search_node_neighbours(
+async fn search_node_neighbours<
+    Spd: SpeedType,
+    TrainAddr: AddressType,
+    SensorAddr: AddressType,
+    SwitchAddr: AddressType,
+    SignalAddr: AddressType,
+    CrossingAddr: AddressType,
+>(
     stack: &mut VecDeque<NodeIndex>,
-    graph: &DiGraph<Node, Vec<Rail>>,
-    railroad: &Railroad,
+    graph: &DiGraph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>,
+    railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
     discovered: &mut FixedBitSet,
     signal: &NodeIndex,
-    in_signals: &mut Vec<Address>,
+    in_signals: &mut Vec<Address<SignalAddr>>,
 ) -> Option<NodeIndex> {
     let node = stack.pop_front()?;
     for succ in graph.neighbors_undirected(node) {
@@ -83,11 +104,17 @@ async fn search_node_neighbours(
     Some(node)
 }
 
-impl Signal {
-    pub(super) async fn search_block(
+impl<SignalAddr: AddressType, TrainAddr: AddressType, SensorAddr: AddressType>
+    Signal<SignalAddr, TrainAddr, SensorAddr>
+{
+    pub(super) async fn search_block<
+        Spd: SpeedType,
+        SwitchAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
         signal: &NodeIndex,
-        railroad: &Railroad,
-    ) -> (Vec<Address>, Vec<Address>) {
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) -> (Vec<Address<SignalAddr>>, Vec<Address<SensorAddr>>) {
         let graph = railroad.road().await;
         let mut signal_walker = graph.neighbors(*signal).detach();
         let mut sensors = vec![];
@@ -115,7 +142,14 @@ impl Signal {
         (in_signals, sensors)
     }
 
-    pub(super) async fn drive(&mut self, railroad: &Railroad) -> Option<Vec<Address>> {
+    pub(super) async fn drive<
+        Spd: SpeedType,
+        SwitchAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        &self,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) -> Option<Vec<Address<SensorAddr>>> {
         if self.status != Status::Free {
             return None;
         }
@@ -139,10 +173,19 @@ impl Signal {
         }
     }
 
-    async fn path_behaviour(&self, railroad: &Railroad) -> Option<Vec<Address>> {
+    async fn get_route<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(train: &Address<TrainAddr>, signal: &Address<SignalAddr>, railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>) -> Option<Vec<NodeIndex>> {
+        let train = railroad.get_train(train)?.lock().await;
+        Some(train.request_route(*signal, railroad).await?.iter().map(|x| **x).collect())
+    }
+
+    async fn path_behaviour<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+        &self,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>
+    ) -> Option<Vec<Address<SensorAddr>>> {
+
+
         let first = &self.requesters.front()?;
-        let train = { railroad.get_train(first)?.lock().await.clone() };
-        let route = train.request_route(self.address, railroad).await?;
+        let route = Signal::get_route(first, &self.address, railroad).await?;
         if !Signal::path_free(&route, railroad, matches!(&self.sig_type, SignalType::Path)).await {
             return None;
         }
@@ -150,19 +193,25 @@ impl Signal {
         self.block_behaviour(&self.block_sensors, railroad).await
     }
 
-    async fn intelligent_path_behaviour(&self, railroad: &Railroad) -> Option<Vec<Address>> {
+    async fn intelligent_path_behaviour<
+        Spd: SpeedType,
+        SwitchAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        &self,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) -> Option<Vec<Address<SensorAddr>>> {
         let first = &self.requesters.front()?;
-        let train = { railroad.get_train(first)?.lock().await.clone() };
-        let route = train.request_route(self.address, railroad).await?;
+        let route = Signal::get_route(first, &self.address, railroad).await?;
         if !Signal::path_free(&route, railroad, matches!(&self.sig_type, SignalType::Path)).await {
             return None;
         }
 
         let road = railroad.road().await;
-        let adr_route: Vec<Address> = route
+        let adr_route: Vec<Address<SensorAddr>> = route
             .iter()
             .filter_map(|index| {
-                let node = road.node_weight(**index)?;
+                let node = road.node_weight(*index)?;
                 match node {
                     Node::Sensor(adr, ..) => Some(*adr),
                     _ => None,
@@ -172,17 +221,16 @@ impl Signal {
         Some(adr_route)
     }
 
-    async fn block_behaviour(
+    async fn block_behaviour<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
         &self,
-        sensors: &[Address],
-        railroad: &Railroad,
-    ) -> Option<Vec<Address>> {
+        sensors: &[Address<SensorAddr>],
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) -> Option<Vec<Address<SensorAddr>>> {
         for sensor in sensors {
             if let Some(sensor) = railroad.get_sensor_mutex(sensor) {
-                if !matches!(
-                    sensor.lock().await.status(),
-                    Status::Free | Status::PathFree
-                ) {
+                let sensor = sensor.lock().await;
+
+                if !matches!(sensor.status(), Status::Free | Status::PathFree) {
                     return None;
                 }
             }
@@ -190,10 +238,14 @@ impl Signal {
         Some(sensors.to_vec())
     }
 
-    async fn path_free(path: &[&NodeIndex], railroad: &Railroad, ignore_signal: bool) -> bool {
+    async fn path_free<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+        path: &[NodeIndex],
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+        ignore_signal: bool,
+    ) -> bool {
         for x in path.iter() {
             if let Some(status) = {
-                if let Node::Signal(sig, ..) = railroad.road().await.index(**x) {
+                if let Node::Signal(sig, ..) = railroad.road().await.index(*x) {
                     return railroad
                         .get_signal_mutex(sig)
                         .unwrap()
@@ -202,7 +254,7 @@ impl Signal {
                         .status()
                         == Status::Free
                         || ignore_signal;
-                } else if let Node::Sensor(sensor, ..) = railroad.road().await.index(**x) {
+                } else if let Node::Sensor(sensor, ..) = railroad.road().await.index(*x) {
                     Some(
                         railroad
                             .get_sensor_mutex(sensor)

@@ -6,24 +6,26 @@ mod signal_checks;
 
 use crate::control::messages::Message;
 use crate::control::rail_system::railroad::Railroad;
+use crate::general::{AddressType, DefaultAddressType, DefaultSpeedType, SpeedType};
 use async_recursion::async_recursion;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::{VisitMap, Visitable};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
+use std::future::Future;
 use std::ops;
-use std::ops::{Index, Not};
+use std::ops::{Add, Index, Not, Sub};
 use std::sync::Arc;
-use tokio::sync::Mutex;
-
-pub type DefaultIx = u16;
+use std::time::Duration;
+use tokio::sync::{Mutex, Notify};
+use tokio::{select, spawn};
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Address<Ix = DefaultIx>(Ix);
+pub struct Address<Ix: AddressType = DefaultAddressType>(Ix);
 
 impl<Ix> Address<Ix>
 where
-    Ix: Copy,
+    Ix: AddressType,
 {
     pub fn new(address: Ix) -> Self {
         Address(address)
@@ -36,7 +38,7 @@ where
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum Speed<Spd = u8> {
+pub enum Speed<Spd: SpeedType = DefaultSpeedType> {
     /// Performs a normal stop. Trains may stop smoothly.
     Stop,
     /// Performs an immediate stop action. Trains do stop immediately.
@@ -45,19 +47,46 @@ pub enum Speed<Spd = u8> {
     Drive(Spd),
 }
 
+impl<T: SpeedType> Add for Speed<T> where T: Add<Output = T> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match rhs {
+            Speed::Stop | Speed::EmergencyStop => self,
+            Speed::Drive(spd) => match self {
+                Speed::Stop => Speed::Drive(spd),
+                Speed::EmergencyStop => Speed::Drive(spd),
+                Speed::Drive(spd2) => Speed::Drive(spd.add(spd2)),
+            },
+        }
+    }
+}
+
+impl<T: SpeedType> Sub for Speed<T> {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        match rhs {
+            Speed::Stop | Speed::EmergencyStop => self,
+            Speed::Drive(spd) => match self {
+                Speed::Stop => Speed::Stop,
+                Speed::EmergencyStop => Speed::EmergencyStop,
+                Speed::Drive(spd2) => spd.sub_to_speed(&spd2),
+            },
+        }
+    }
+}
+
 impl<Spd> PartialOrd<Self> for Speed<Spd>
 where
-    Spd: Ord,
+    Spd: SpeedType,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<Spd> Ord for Speed<Spd>
-where
-    Spd: Ord,
-{
+impl<Spd: SpeedType> Ord for Speed<Spd> {
     fn cmp(&self, other: &Self) -> Ordering {
         if *self == *other {
             return Ordering::Equal;
@@ -84,23 +113,37 @@ where
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum Node {
-    Signal(Address, Position),
-    Sensor(Address, Position),
+pub enum Node<
+    SensorAddr: AddressType,
+    SwitchAddr: AddressType,
+    SignalAddr: AddressType,
+    CrossingAddr: AddressType,
+> {
+    Signal(Address<SignalAddr>, Position),
+    Sensor(Address<SensorAddr>, Position),
     Switch(
-        Address,
+        Address<SwitchAddr>,
         Position,
         SwitchType,
         Option<NodeIndex>,
         petgraph::Direction,
     ),
-    Station(Address, Position),
-    Cross(Address),
+    Station(Address<SensorAddr>, Position),
+    Cross(Address<CrossingAddr>),
     Buffer(Position),
 }
 
-impl Node {
-    pub fn position(&self, rail: &Railroad) -> Position {
+impl<
+        SensorAddr: AddressType,
+        SwitchAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    > Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>
+{
+    pub fn position<Spd: SpeedType, TrainAddr: AddressType>(
+        &self,
+        rail: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) -> Position {
         match self {
             Node::Signal(_, position) => *position,
             Node::Sensor(_, position) => *position,
@@ -115,6 +158,10 @@ impl Node {
             }
             Node::Buffer(position) => *position,
         }
+    }
+
+    pub fn is_driveable(&self) -> bool {
+        matches!(self, Node::Sensor(..) | Node::Station(..))
     }
 }
 
@@ -218,7 +265,7 @@ impl Coord {
     /// Checks if the given `coord` is positioned in the `dir`ection of this coord
     ///
     /// ```
-    /// use locologic::control::rail_system::components::{Coord, Direction};
+    /// # use locologic::control::rail_system::components::{Coord, Direction};
     ///
     /// assert!(Coord(0,0,0).is_on_line(&Coord(0,3,0), Direction::East),
     ///     "Position lays in the east");
@@ -404,8 +451,8 @@ impl Rail {
     ///
     /// # Usage
     ///
-    /// ```
-    /// use locologic::control::rail_system::components::{Coord, Direction, Position, Rail};
+    /// ```rust
+    /// # use locologic::control::rail_system::components::{Coord, Direction, Position, Rail};
     ///
     /// let from = Position::new(Coord(0, 0, 0), Direction::East);
     /// let to = Coord(0, 3, 0);
@@ -415,10 +462,10 @@ impl Rail {
     /// let right = Rail::perform_step(&from, &to, in_direction);
     /// let wrong = Rail::perform_step(&from, &wrong_to, in_direction);
     ///
-    /// let check_value_first = Rail::new(from, 2, Direction::South);
+    /// # let check_value_first = Rail::new(from, 2, Direction::South);
     ///
-    /// assert_eq!(right, Some(check_value_first));
-    /// assert_eq!(wrong, None);
+    /// # assert_eq!(right, Some(check_value_first));
+    /// # assert_eq!(wrong, None);
     /// ```
     pub fn perform_step(start: &Position, end: &Coord, in_dir: Direction) -> Option<Rail> {
         if start.coord == *end {
@@ -438,22 +485,22 @@ impl Rail {
     ///
     /// # Usage
     ///
-    /// ```
-    /// use locologic::control::rail_system::components::{Coord, Direction, Position, Rail};
-    ///
+    /// ```rust
+    /// # use locologic::control::rail_system::components::{Coord, Direction, Position, Rail};
+    /// #
     /// let connection = Rail::new_connection_vec(&vec![
     ///         Position::new(Coord(0, 0, 0), Direction::East),
     ///         Position::new(Coord(0, 4, 0), Direction::North),
     ///         Position::new(Coord(1, 4, 0), Direction::Northeast),
     ///         Position::new(Coord(4, 7, 0), Direction::East)
     ///     ], Direction::North);
-    /// let expected_vec = vec![
-    ///     Rail::new(Position::new(Coord(0, 0, 0), Direction::East), 3, Direction::North),
-    ///     Rail::new(Position::new(Coord(0, 4, 0), Direction::North), 0, Direction::West),
-    ///     Rail::new(Position::new(Coord(1, 4, 0), Direction::Northeast), 2, Direction::South),
-    /// ];
-    ///
-    /// assert_eq!(connection, Some(expected_vec));
+    /// # let expected_vec = vec![
+    /// #     Rail::new(Position::new(Coord(0, 0, 0), Direction::East), 3, Direction::North),
+    /// #     Rail::new(Position::new(Coord(0, 4, 0), Direction::North), 0, Direction::West),
+    /// #     Rail::new(Position::new(Coord(1, 4, 0), Direction::Northeast), 2, Direction::South),
+    /// # ];
+    /// #
+    /// # assert_eq!(connection, Some(expected_vec));
     /// ```
     pub fn new_connection_vec(steps: &[Position], mut in_dir: Direction) -> Option<Vec<Rail>> {
         let mut connection_rail = vec![];
@@ -475,20 +522,20 @@ impl Rail {
     ///
     /// # Usage
     ///
-    /// ```
-    /// use locologic::control::rail_system::components::{Coord, Direction, Position, Rail};
+    /// ```rust
+    /// # use locologic::control::rail_system::components::{Coord, Direction, Position, Rail};
     /// let start_pos = Coord(0,0,0);
     /// let steps = [(0, Direction::East), (3, Direction::Southeast), (2, Direction::North)];
     /// let in_dir = Direction::North;
     ///
     /// let calculated = Rail::connection_by_length(&steps, in_dir, start_pos);
-    /// let expected = Some(vec![
-    ///     Rail::new(Position::new(Coord(0,0,0), Direction::East), 0, Direction::North),
-    ///     Rail::new(Position::new(Coord(0,1,0), Direction::Southeast), 3, Direction::West),
-    ///     Rail::new(Position::new(Coord(4,5,0), Direction::North), 2, Direction::Northwest)
-    /// ]);
+    /// # let expected = Some(vec![
+    /// #     Rail::new(Position::new(Coord(0,0,0), Direction::East), 0, Direction::North),
+    /// #     Rail::new(Position::new(Coord(0,1,0), Direction::Southeast), 3, Direction::West),
+    /// #     Rail::new(Position::new(Coord(4,5,0), Direction::North), 2, Direction::Northwest)
+    /// # ]);
     ///
-    /// assert_eq!(calculated, expected);
+    /// # assert_eq!(calculated, expected);
     /// ```
     pub fn connection_by_length(
         steps: &[(usize, Direction)],
@@ -606,14 +653,14 @@ impl From<bool> for SwDir {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Switch {
-    address: Address,
+pub struct Switch<SwitchAddr: AddressType> {
+    address: Address<SwitchAddr>,
     dir: SwDir,
     updated: bool,
 }
 
-impl Switch {
-    pub fn new(address: Address) -> Self {
+impl<SwitchAddr: AddressType> Switch<SwitchAddr> {
+    pub fn new(address: Address<SwitchAddr>) -> Self {
         Switch {
             address,
             dir: SwDir::Straight,
@@ -626,12 +673,18 @@ impl Switch {
     /// Please use the [Switch::switch_in_correct_state] Method to check
     /// if the switch already performed it's switch operation in the correct state,
     /// else you may wait until the switch is performed completely.
-    pub async fn request_path(
+    pub async fn request_path<
+        Spd: SpeedType,
+        TrainAddr: AddressType,
+        SensorAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
         &mut self,
         switch_node: NodeIndex,
         from_index: NodeIndex,
         to_index: NodeIndex,
-        railroad: &Railroad,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
     ) {
         if let Some(Node::Switch(_adr, _pos, _s_type, some_node, _dir)) =
             railroad.road().await.node_weight(switch_node)
@@ -649,12 +702,18 @@ impl Switch {
     }
 
     /// Checks if the switch is in the correct state to pass.
-    pub async fn switch_in_correct_state(
+    pub async fn switch_in_correct_state<
+        Spd: SpeedType,
+        TrainAddr: AddressType,
+        SensorAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
         &self,
         switch_node: NodeIndex,
         from_index: NodeIndex,
         to_index: NodeIndex,
-        railroad: &Railroad,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
     ) -> bool {
         if let Some(Node::Switch(_adr, _pos, _s_type, some_node, _dir)) =
             railroad.road().await.node_weight(switch_node)
@@ -672,7 +731,17 @@ impl Switch {
 
     /// Requests a switching of this switch to the requested direction,
     /// if the switch is not already directed correctly.
-    pub async fn switch(&mut self, dir: SwDir, railroad: &Railroad) {
+    pub async fn switch<
+        Spd: SpeedType,
+        TrainAddr: AddressType,
+        SensorAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        &mut self,
+        dir: SwDir,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) {
         if self.dir == dir && self.updated {
             return;
         }
@@ -684,7 +753,17 @@ impl Switch {
 
     /// Marks the current switch state as correct.
     /// Note: This method may later be private depending on further implementations.
-    pub async fn ack_switch_state(&mut self, dir: SwDir, railroad: &Railroad) {
+    pub async fn ack_switch_state<
+        Spd: SpeedType,
+        TrainAddr: AddressType,
+        SensorAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        &mut self,
+        dir: SwDir,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) {
         if dir == self.dir {
             self.updated = true;
         } else {
@@ -693,20 +772,20 @@ impl Switch {
         }
     }
 
-    pub fn address(&self) -> Address {
+    pub fn address(&self) -> Address<SwitchAddr> {
         self.address
     }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Cross {
-    address: Address,
+pub struct Cross<CrossAddr: AddressType> {
+    address: Address<CrossAddr>,
     nodes: (NodeIndex, NodeIndex),
     pos: Position,
 }
 
-impl Cross {
-    pub fn new(address: Address, pos: Position, nodes: (NodeIndex, NodeIndex)) -> Self {
+impl<CrossAddr: AddressType> Cross<CrossAddr> {
+    pub fn new(address: Address<CrossAddr>, pos: Position, nodes: (NodeIndex, NodeIndex)) -> Self {
         Cross {
             address,
             nodes,
@@ -714,7 +793,7 @@ impl Cross {
         }
     }
 
-    pub fn address(&self) -> Address {
+    pub fn address(&self) -> Address<CrossAddr> {
         self.address
     }
 }
@@ -763,39 +842,48 @@ impl Not for SLevel {
     }
 }
 
-#[derive(Debug, Clone, Hash)]
-pub struct Sensor {
-    address: Address,
+#[derive(Debug, Clone)]
+pub struct Sensor<Spd: SpeedType, SensorAddr: AddressType, TrainAddr: AddressType> {
+    address: Address<SensorAddr>,
     status: Status,
     level: SLevel,
-    train: Option<Address>,
-    max_speed: Speed,
+    train: Option<Address<TrainAddr>>,
+    max_speed: Speed<Spd>,
+    free_time: Duration,
+    reenter_notifier: Arc<Notify>,
 }
 
-impl Sensor {
-    pub fn new(adr: Address, max_speed: Speed) -> Sensor {
+impl<Spd: SpeedType, SensorAddr: AddressType, TrainAddr: AddressType>
+    Sensor<Spd, SensorAddr, TrainAddr>
+{
+    pub fn new(
+        adr: Address<SensorAddr>,
+        max_speed: Speed<Spd>,
+    ) -> Sensor<Spd, SensorAddr, TrainAddr> {
         Sensor {
             address: adr,
             status: Status::Free,
             level: SLevel::Free,
             train: None,
             max_speed,
+            free_time: Duration::new(2, 0),
+            reenter_notifier: Arc::new(Notify::new()),
         }
     }
 
-    pub fn address(&self) -> Address {
+    pub fn address(&self) -> Address<SensorAddr> {
         self.address
     }
 
-    pub fn max_speed(&self) -> Speed {
+    pub fn max_speed(&self) -> Speed<Spd> {
         self.max_speed
     }
 
-    pub fn train(&self) -> &Option<Address> {
+    pub fn train(&self) -> &Option<Address<TrainAddr>> {
         &self.train
     }
 
-    pub fn block(&mut self, train: Address) -> bool {
+    pub fn block(&mut self, train: Address<TrainAddr>) -> bool {
         if let Some(t) = self.train {
             t == train
         } else {
@@ -805,7 +893,80 @@ impl Sensor {
         }
     }
 
-    pub fn free(&mut self, train: Address) {
+    pub async fn handle_sensor_level<
+        SwitchAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        &mut self,
+        s_level: SLevel,
+        railroad: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+    ) {
+        match s_level {
+            SLevel::Occupied => {
+                if let Some(train) = self.train {
+                    railroad
+                        .send(Message::TrainOnSensor(self.address, train))
+                        .await;
+                }
+
+                self.reenter_notifier.notify_waiters();
+                self.level = s_level;
+            }
+            SLevel::Free => self.sensor_free(railroad),
+        }
+    }
+
+    fn sensor_free<SwitchAddr: AddressType, SignalAddr: AddressType, CrossingAddr: AddressType>(
+        &mut self,
+        railroad: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+    ) {
+        self.reenter_notifier.notify_waiters();
+        if self.train.is_some() {
+            self.status = Status::Reserved;
+
+            let duration = self.free_time;
+            let notifier = self.reenter_notifier.clone();
+            let address = self.address;
+            let railroad = railroad;
+
+            spawn(wait_and_run(
+                duration,
+                notifier,
+                Sensor::free_sensor(address, railroad),
+            ));
+        } else {
+            self.status = Status::Free;
+        }
+    }
+
+    async fn free_sensor<
+        SwitchAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        adr: Address<SensorAddr>,
+        railroad: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+    ) {
+        if let Some(sensor) = railroad.get_sensor_mutex(&adr) {
+            let mut sensor = sensor.lock().await;
+            if sensor.status == Status::Occupied {
+                return;
+            }
+            sensor.status = Status::Free;
+            sensor.reenter_notifier.notify_waiters();
+            sensor
+                .train
+                .into_iter()
+                .for_each(|t| sensor.free(t, &railroad));
+        }
+    }
+
+    pub fn free<SwitchAddr: AddressType, SignalAddr: AddressType, CrossingAddr: AddressType>(
+        &mut self,
+        train: Address<TrainAddr>,
+        _railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) {
         if let Some(t) = self.train {
             if t == train {
                 self.train = None;
@@ -823,6 +984,18 @@ impl Sensor {
     }
 }
 
+async fn wait_and_run<T>(duration: Duration, interrupter: Arc<Notify>, call: T)
+where
+    T: Future,
+{
+    select! {
+        _ = interrupter.notified() => {},
+        _ = tokio::time::sleep(duration) => {
+            call.await;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum SignalType {
     Block,
@@ -831,20 +1004,26 @@ pub enum SignalType {
 }
 
 #[derive(Debug, Clone)]
-pub struct Signal {
-    address: Address,
+pub struct Signal<SignalAddr: AddressType, TrainAddr: AddressType, SensorAddr: AddressType> {
+    address: Address<SignalAddr>,
     representing_node: NodeIndex,
     sig_type: SignalType,
     status: Status,
-    trains: Vec<Address>,
-    requesters: VecDeque<Address>,
-    other_input_signals: Vec<Address>,
-    block_sensors: Vec<Address>,
-    calculation_group: Arc<Mutex<Address>>,
+    trains: Vec<Address<TrainAddr>>,
+    requesters: VecDeque<Address<TrainAddr>>,
+    other_input_signals: Vec<Address<SignalAddr>>,
+    block_sensors: Vec<Address<SensorAddr>>,
+    calculation_group: Arc<Mutex<Address<SignalAddr>>>,
 }
 
-impl Signal {
-    pub fn new(address: Address, sig_type: SignalType, representing_node: NodeIndex) -> Self {
+impl<SignalAddr: AddressType, TrainAddr: AddressType, SensorAddr: AddressType>
+    Signal<SignalAddr, TrainAddr, SensorAddr>
+{
+    pub fn new(
+        address: Address<SignalAddr>,
+        sig_type: SignalType,
+        representing_node: NodeIndex,
+    ) -> Self {
         Signal {
             address,
             representing_node,
@@ -862,7 +1041,11 @@ impl Signal {
         self.representing_node
     }
 
-    async fn reset_group(&mut self, signal: &Address, railroad: &Railroad) {
+    async fn reset_group<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+        &mut self,
+        signal: &Address<SignalAddr>,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) {
         self.calculation_group = railroad
             .get_signal_mutex(signal)
             .unwrap()
@@ -872,7 +1055,10 @@ impl Signal {
             .clone();
     }
 
-    pub async fn initialize(&mut self, railroad: &Railroad) {
+    pub async fn initialize<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+        &mut self,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) {
         let (signals, sensors) = Signal::search_block(&self.representing_node, railroad).await;
         self.block_sensors = sensors;
 
@@ -885,18 +1071,48 @@ impl Signal {
         self.other_input_signals = signals;
     }
 
-    pub async fn request_block(&mut self, train: Address) {
+    pub async fn request_block<
+        Spd: SpeedType,
+        SwitchAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        &mut self,
+        train: Address<TrainAddr>,
+        railroad: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+    ) {
         self.requesters.push_back(train);
+        let sig_adr = Arc::new(self.address());
+        let rail = railroad.clone();
+        spawn(async move {
+            let sig = sig_adr.clone();
+            let rail = rail.clone();
+            Signal::get_signal_and_next(sig.clone(), rail.clone()).await;
+        });
     }
 
-    async fn next(&mut self, railroad: &Railroad) {
+    async fn get_signal_and_next<
+        Spd: SpeedType,
+        SwitchAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        signal: Arc<Address<SignalAddr>>,
+        railroad: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+    ) {
+        let mut signal = railroad.get_signal_mutex(&signal).unwrap().lock().await;
+        signal.next(railroad.clone()).await;
+    }
+
+    async fn next<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+        &mut self,
+        railroad: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+    ) {
         if self.requesters.is_empty() {
             return;
         }
 
         let cloned = self.calculation_group.clone();
         let _calculate = cloned.lock().await;
-        if let Some(free_road) = self.drive(railroad).await {
+        if let Some(free_road) = self.drive(&railroad).await {
             if !self.requesters.is_empty() {
                 return;
             }
@@ -907,13 +1123,13 @@ impl Signal {
             for adr in free_road {
                 if let Some(mutex) = railroad.get_sensor_mutex(&adr) {
                     let mut sensor = mutex.lock().await;
-                    sensor.block(self.address());
+                    sensor.block(train);
                 }
             }
         }
     }
 
-    pub fn address(&self) -> Address {
+    pub fn address(&self) -> Address<SignalAddr> {
         self.address
     }
 
@@ -932,7 +1148,11 @@ impl Signal {
         }
     }
 
-    pub async fn block_free(&self, index: NodeIndex, railroad: &Railroad) -> bool {
+    pub async fn block_free<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+        &self,
+        index: NodeIndex,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) -> bool {
         for neighbor in railroad.road().await.neighbors(index) {
             if Signal::neighbours_free(neighbor, railroad).await {
                 return false;
@@ -942,7 +1162,10 @@ impl Signal {
     }
 
     #[async_recursion]
-    async fn neighbours_free(index: NodeIndex, railroad: &Railroad) -> bool {
+    async fn neighbours_free<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+        index: NodeIndex,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) -> bool {
         match railroad.road().await.index(index) {
             Node::Sensor(sensor, ..) | Node::Station(sensor, ..) => {
                 let is_free = {
@@ -972,7 +1195,10 @@ impl Signal {
         }
     }
 
-    pub async fn update(&mut self, railroad: &Railroad) {
+    pub async fn update<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+        &mut self,
+        railroad: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+    ) {
         if self.trains.is_empty() {
             self.next(railroad).await;
         }
