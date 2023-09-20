@@ -20,12 +20,10 @@ pub struct Clock {
 pub struct Train<Spd: SpeedType, TrainAddr: AddressType> {
     /// The train's address
     address: Address<TrainAddr>,
-    /// The train's current speed
-    actual_speed: Speed<Spd>,
     /// The speed the train should read
     speed: Speed<Spd>,
     end_speed_adjusting: Arc<Notify>,
-    speed_updater: Option<tokio::task::JoinHandle<()>>,
+    speed_updater: Option<tokio::task::JoinHandle<Speed<Spd>>>,
     /// The train's position
     position: NodeIndex,
     /// Controls the driving process
@@ -49,6 +47,21 @@ impl<Spd: SpeedType, Ix: AddressType> Hash for Train<Spd, Ix> {
 }
 
 impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
+    pub(crate) fn new(address: Address<TrainAddr>, position: NodeIndex) -> Train<Spd, TrainAddr> {
+        Train {
+            address,
+            speed: Speed::<Spd>::Stop,
+            end_speed_adjusting: Arc::new(Notify::new()),
+            speed_updater: None,
+            position,
+            route: None,
+            timetable: Vec::new(),
+        }
+    }
+
+    /// Sets the speed of this train to the given speed.
+    /// The train will accelerate or decelerate to the given speed, by controlled messages.
+    /// An emergency stop will be executed immediately without any deceleration delay.
     pub async fn set_speed<
         SensorAddr: AddressType,
         SwitchAddr: AddressType,
@@ -59,20 +72,18 @@ impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
         speed: Speed<Spd>,
         railroad: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
     ) {
+        let mut actual_speed = self.speed;
         self.speed = speed;
+
         self.end_speed_adjusting.notify_waiters();
+
         if let Some(join) = self.speed_updater.take() {
-            join.await.unwrap();
+            actual_speed = join.await.unwrap();
         }
 
         if speed == Speed::EmergencyStop {
             railroad
-                .send(
-                    Message::<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>::TrainSpeed(
-                        self.address,
-                        speed,
-                    ),
-                )
+                .send(Message::TrainSpeed(self.address, speed))
                 .await;
             return;
         }
@@ -80,49 +91,57 @@ impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
         let self_address = self.address;
         let speed = speed;
         let interrupter = self.end_speed_adjusting.clone();
-        let duration = Duration::from_secs(1);
 
         self.speed_updater = Some(tokio::spawn(async move {
-            loop {
-                let calculate_speed;
-                select! {
-                    _ = interrupter.notified() => {
-                        return;
-                    },
-                    _ = tokio::time::sleep(duration) => {
-                        calculate_speed = speed - Speed::<Spd>::Drive(Spd::one());
-                    }
-                }
-                railroad
-                    .send(Message::TrainSpeed(self_address, calculate_speed))
-                    .await;
-            }
+            Train::speed_accelerator(self_address, actual_speed, speed, interrupter, railroad).await
         }));
     }
-}
 
-impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
+    async fn speed_accelerator<
+        SensorAddr: AddressType,
+        SwitchAddr: AddressType,
+        SignalAddr: AddressType,
+        CrossingAddr: AddressType,
+    >(
+        address: Address<TrainAddr>,
+        mut actual_speed: Speed<Spd>,
+        speed: Speed<Spd>,
+        interrupter: Arc<Notify>,
+        railroad: Arc<Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>>,
+    ) -> Speed<Spd> {
+        let duration = Duration::from_millis(10);
+        loop {
+            select! {
+                _ = interrupter.notified() => {
+                    return actual_speed;
+                },
+                _ = tokio::time::sleep(duration) => {
+
+                }
+            }
+
+            if actual_speed < speed {
+                actual_speed = actual_speed + Speed::<Spd>::Drive(Spd::default_acceleration());
+                if actual_speed > speed {
+                    break;
+                }
+            } else {
+                actual_speed = actual_speed - Speed::<Spd>::Drive(Spd::default_acceleration());
+                if actual_speed < speed {
+                    break;
+                }
+            }
+
+            railroad
+                .send(Message::TrainSpeed(address, actual_speed))
+                .await;
+        }
+        railroad.send(Message::TrainSpeed(address, speed)).await;
+        speed
+    }
+
     pub fn stands(&self) -> bool {
         self.speed == Speed::Stop || self.speed == Speed::EmergencyStop
-    }
-}
-
-impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
-    pub(crate) fn new(address: Address<TrainAddr>, position: NodeIndex) -> Train<Spd, TrainAddr> {
-        Train {
-            address,
-            speed: Speed::<Spd>::Stop,
-            actual_speed: Speed::<Spd>::Stop,
-            end_speed_adjusting: Arc::new(Notify::new()),
-            speed_updater: None,
-            position,
-            route: None,
-            timetable: Vec::new(),
-        }
-    }
-
-    pub fn actual_speed(&self) -> Speed<Spd> {
-        self.actual_speed
     }
 
     pub fn timetable(&self) -> &Vec<Station<Spd, TrainAddr>> {

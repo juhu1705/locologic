@@ -173,17 +173,26 @@ impl<SignalAddr: AddressType, TrainAddr: AddressType, SensorAddr: AddressType>
         }
     }
 
-    async fn get_route<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(train: &Address<TrainAddr>, signal: &Address<SignalAddr>, railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>) -> Option<Vec<NodeIndex>> {
+    async fn get_route<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+        train: &Address<TrainAddr>,
+        signal: &Address<SignalAddr>,
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
+    ) -> Option<Vec<NodeIndex>> {
         let train = railroad.get_train(train)?.lock().await;
-        Some(train.request_route(*signal, railroad).await?.iter().map(|x| **x).collect())
+        Some(
+            train
+                .request_route(*signal, railroad)
+                .await?
+                .iter()
+                .map(|x| **x)
+                .collect(),
+        )
     }
 
     async fn path_behaviour<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
         &self,
-        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>
+        railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
     ) -> Option<Vec<Address<SensorAddr>>> {
-
-
         let first = &self.requesters.front()?;
         let route = Signal::get_route(first, &self.address, railroad).await?;
         if !Signal::path_free(&route, railroad, matches!(&self.sig_type, SignalType::Path)).await {

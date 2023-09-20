@@ -16,13 +16,18 @@ use tokio::sync::broadcast::{channel, Receiver};
 use tokio::sync::{broadcast::Sender, Mutex};
 use tokio::task::spawn_blocking;
 
-type Road<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr> = Mutex<DiGraph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>>;
+type Road<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr> =
+    Mutex<DiGraph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>>;
 type Trains<Spd, TrainAddr> = HashMap<Address<TrainAddr>, Mutex<Train<Spd, TrainAddr>>>;
-type Sensors<Spd, SensorAddr, TrainAddr> = HashMap<Address<SensorAddr>, (Mutex<Sensor<Spd, SensorAddr, TrainAddr>>, Vec<NodeIndex>)>;
-type Signals<SignalAddr, TrainAddr, SensorAddr> = HashMap<Address<SignalAddr>, Mutex<Signal<SignalAddr, TrainAddr, SensorAddr>>>;
+type Sensors<Spd, SensorAddr, TrainAddr> =
+    HashMap<Address<SensorAddr>, (Mutex<Sensor<Spd, SensorAddr, TrainAddr>>, Vec<NodeIndex>)>;
+type Signals<SignalAddr, TrainAddr, SensorAddr> =
+    HashMap<Address<SignalAddr>, Mutex<Signal<SignalAddr, TrainAddr, SensorAddr>>>;
 type Crossings<CrossingAddr> = HashMap<Address<CrossingAddr>, Mutex<Cross<CrossingAddr>>>;
-type Switches<SwitchAddr> = HashMap<Address<SwitchAddr>, (Mutex<Switch<SwitchAddr>>, Vec<NodeIndex>)>;
-type Channel<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr> = Sender<Message<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>>;
+type Switches<SwitchAddr> =
+    HashMap<Address<SwitchAddr>, (Mutex<Switch<SwitchAddr>>, Vec<NodeIndex>)>;
+type Channel<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr> =
+    Sender<Message<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>>;
 
 pub struct Railroad<
     Spd: SpeedType = DefaultSpeedType,
@@ -282,7 +287,8 @@ fn node_cost<
     }
 }
 
-type BuilderSensors<Spd, SensorAddr, TrainAddr> = HashMap<Address<SensorAddr>, (Sensor<Spd, SensorAddr, TrainAddr>, Vec<NodeIndex>)>;
+type BuilderSensors<Spd, SensorAddr, TrainAddr> =
+    HashMap<Address<SensorAddr>, (Sensor<Spd, SensorAddr, TrainAddr>, Vec<NodeIndex>)>;
 
 pub struct Builder<
     Spd: SpeedType,

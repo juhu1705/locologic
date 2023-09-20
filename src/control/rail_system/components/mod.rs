@@ -47,7 +47,10 @@ pub enum Speed<Spd: SpeedType = DefaultSpeedType> {
     Drive(Spd),
 }
 
-impl<T: SpeedType> Add for Speed<T> where T: Add<Output = T> {
+impl<T: SpeedType> Add for Speed<T>
+where
+    T: Add<Output = T>,
+{
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
