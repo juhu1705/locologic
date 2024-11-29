@@ -9,12 +9,12 @@ A rust library for controlling a model train railroad system.
 | Automatic driving                   |             | IN PROCESS |
 | Save and load railway configuration |             | PLANNING   |
 
-## Importing the LocoLogic
+## Importing LocoLogic
 
 As rust is able to use GitHub repositories directly as dependencies you can simply add
 `locologic = { git = "https://github.com/juhu1705/locologic.git" }` to your `Cargo.toml`
 
-## Using the LocoLogic
+## Using LocoLogic
 
 Not yet available
 
@@ -22,7 +22,7 @@ Not yet available
 
 The documentation is published [here](https://juhu1705.github.io/locologic/doc/locologic)
 
-## Committing to the LocoLogic
+## Committing to LocoLogic
 
 ### Setting up the project
 
