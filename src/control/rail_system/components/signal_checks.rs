@@ -1,10 +1,12 @@
+use std::ops::Deref;
+
 use super::*;
 use fixedbitset::FixedBitSet;
 use petgraph::graph::DiGraph;
-use tokio::sync::MutexGuard;
 
+/// Pushes the following track to the `stack` if the crossing is entered by the `parent_node`.
 fn handle_cross_route<CrossingAddr: AddressType>(
-    cross: MutexGuard<Cross<CrossingAddr>>,
+    cross: &Cross<CrossingAddr>,
     parent_node: &NodeIndex,
     stack: &mut VecDeque<NodeIndex>,
 ) {
@@ -15,6 +17,8 @@ fn handle_cross_route<CrossingAddr: AddressType>(
     }
 }
 
+/// Pushes the `succ`essor node to the end of the `stack`. Then checks if the `parent_node` is a
+/// crossing. If so it will push the cross successor as well.
 async fn handle_found_node<
     Spd: SpeedType,
     TrainAddr: AddressType,
@@ -32,11 +36,12 @@ async fn handle_found_node<
     stack.push_back(succ);
     if let Some(Node::Cross(adr)) = graph.node_weight(*parent_node) {
         if let Some(cross) = railroad.get_crossing_mutex(adr) {
-            handle_cross_route(cross.lock().await, parent_node, stack);
+            handle_cross_route(cross.lock().await.deref(), parent_node, stack);
         }
     }
 }
 
+///
 async fn handle_successor<
     Spd: SpeedType,
     TrainAddr: AddressType,

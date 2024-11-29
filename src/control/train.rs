@@ -89,7 +89,6 @@ impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
         }
 
         let self_address = self.address;
-        let speed = speed;
         let interrupter = self.end_speed_adjusting.clone();
 
         self.speed_updater = Some(tokio::spawn(async move {
