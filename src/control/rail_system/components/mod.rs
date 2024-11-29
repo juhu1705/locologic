@@ -47,6 +47,12 @@ pub enum Speed<Spd: SpeedType = DefaultSpeedType> {
     Drive(Spd),
 }
 
+impl<Spd: SpeedType> Speed<Spd> {
+    pub fn default_acceleration() -> Self {
+        Self::Drive(Spd::default_acceleration())
+    }
+}
+
 impl<T: SpeedType> Add for Speed<T>
 where
     T: Add<Output = T>,

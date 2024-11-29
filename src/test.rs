@@ -2,7 +2,7 @@
 mod tests {
     #[test]
     fn splitting() {
-        let v = &vec![0, 1, 2, 3, 4, 5];
+        let v = &[0, 1, 2, 3, 4, 5];
         if let Some(index) = v.iter().position(|&r| r == 2) {
             let end = if let Some(i) = v[index..].iter().position(|&r| r == 7) {
                 i + index + 1

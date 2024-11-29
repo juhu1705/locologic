@@ -47,6 +47,7 @@ impl<Spd: SpeedType, Ix: AddressType> Hash for Train<Spd, Ix> {
 }
 
 impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
+    /// Creates a new train.
     pub(crate) fn new(address: Address<TrainAddr>, position: NodeIndex) -> Train<Spd, TrainAddr> {
         Train {
             address,
@@ -89,7 +90,6 @@ impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
         }
 
         let self_address = self.address;
-        let speed = speed;
         let interrupter = self.end_speed_adjusting.clone();
 
         self.speed_updater = Some(tokio::spawn(async move {
@@ -121,12 +121,12 @@ impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
             }
 
             if actual_speed < speed {
-                actual_speed = actual_speed + Speed::<Spd>::Drive(Spd::default_acceleration());
+                actual_speed = actual_speed + Speed::default_acceleration();
                 if actual_speed > speed {
                     break;
                 }
             } else {
-                actual_speed = actual_speed - Speed::<Spd>::Drive(Spd::default_acceleration());
+                actual_speed = actual_speed - Speed::default_acceleration();
                 if actual_speed < speed {
                     break;
                 }

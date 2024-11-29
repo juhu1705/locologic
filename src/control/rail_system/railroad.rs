@@ -29,6 +29,7 @@ type Switches<SwitchAddr> =
 type Channel<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr> =
     Sender<Message<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>>;
 
+#[derive(Debug)]
 pub struct Railroad<
     Spd: SpeedType = DefaultSpeedType,
     TrainAddr: AddressType = DefaultAddressType,
@@ -62,6 +63,8 @@ impl<
         self.road.lock().await.clone()
     }
 
+    /// Trying to create a train and place it on the given position. If failing it will return
+    /// None.
     pub async fn create_train(
         &mut self,
         address: Address<TrainAddr>,
@@ -551,7 +554,7 @@ impl<
         signal_type: SignalType,
         position: Position,
     ) -> Option<NodeIndex> {
-        if self.signals.get(&signal).is_some() {
+        if self.signals.contains_key(&signal) {
             return None;
         }
 
@@ -567,7 +570,7 @@ impl<
         cross: Address<CrossingAddr>,
         pos: Position,
     ) -> Option<(NodeIndex, NodeIndex)> {
-        if self.crossings.get(&cross).is_some() {
+        if self.crossings.contains_key(&cross) {
             return None;
         }
 
