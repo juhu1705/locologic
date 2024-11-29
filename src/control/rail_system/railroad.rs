@@ -174,7 +174,7 @@ impl<
         destination: NodeIndex,
     ) -> Option<(usize, Vec<NodeIndex>)> {
         let graph = { rail.road.lock().await.clone() };
-        if let Ok(result) = spawn_blocking(move || {
+        spawn_blocking(move || {
             astar(
                 &graph,
                 start,
@@ -187,11 +187,7 @@ impl<
             )
         })
         .await
-        {
-            result
-        } else {
-            None
-        }
+        .unwrap_or_default()
     }
 
     /// Returns one possible input signal of a block.
@@ -218,7 +214,7 @@ impl<
 
     /// Sends a message to the railroads general message channel
     /// ignoring the possibility for now active subscribers receiving that message.
-    pub async fn send(&self, msg: Message<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>) {
+    pub fn send(&self, msg: Message<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr>) {
         let _ = self.channel.send(msg);
     }
 }
@@ -278,13 +274,7 @@ fn node_cost<
     }
 
     match graph.index(node) {
-        Node::Sensor(sensor_adr, ..) => {
-            if let Some(cost) = train_cost(sensor_adr, rail) {
-                cost
-            } else {
-                2
-            }
-        }
+        Node::Sensor(sensor_adr, ..) => train_cost(sensor_adr, rail).unwrap_or(2),
         Node::Station(..) => 500,
         _ => 2,
     }

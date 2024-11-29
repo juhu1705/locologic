@@ -757,7 +757,7 @@ impl<SwitchAddr: AddressType> Switch<SwitchAddr> {
 
         self.updated = false;
         let message = Message::Switch(self.address, dir);
-        railroad.send(message).await;
+        railroad.send(message);
     }
 
     /// Marks the current switch state as correct.
@@ -914,9 +914,7 @@ impl<Spd: SpeedType, SensorAddr: AddressType, TrainAddr: AddressType>
         match s_level {
             SLevel::Occupied => {
                 if let Some(train) = self.train {
-                    railroad
-                        .send(Message::TrainOnSensor(self.address, train))
-                        .await;
+                    railroad.send(Message::TrainOnSensor(self.address, train));
                 }
 
                 self.reenter_notifier.notify_waiters();
@@ -1092,11 +1090,12 @@ impl<SignalAddr: AddressType, TrainAddr: AddressType, SensorAddr: AddressType>
         self.requesters.push_back(train);
         let sig_adr = Arc::new(self.address());
         let rail = railroad.clone();
-        spawn(async move {
+        let _ = spawn(async move {
             let sig = sig_adr.clone();
             let rail = rail.clone();
             Signal::get_signal_and_next(sig.clone(), rail.clone()).await;
-        });
+        })
+        .await;
     }
 
     async fn get_signal_and_next<
@@ -1171,10 +1170,15 @@ impl<SignalAddr: AddressType, TrainAddr: AddressType, SensorAddr: AddressType>
     }
 
     #[async_recursion]
-    async fn neighbours_free<Spd: SpeedType, SwitchAddr: AddressType, CrossingAddr: AddressType>(
+    async fn neighbours_free<Spd, SwitchAddr, CrossingAddr>(
         index: NodeIndex,
         railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
-    ) -> bool {
+    ) -> bool
+    where
+        Spd: SpeedType,
+        SwitchAddr: AddressType,
+        CrossingAddr: AddressType,
+    {
         match railroad.road().await.index(index) {
             Node::Sensor(sensor, ..) | Node::Station(sensor, ..) => {
                 let is_free = {
@@ -1215,7 +1219,7 @@ impl<SignalAddr: AddressType, TrainAddr: AddressType, SensorAddr: AddressType>
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct LightComponents {
+pub struct _LightComponents {
     pos: Position,
     status: bool,
 }

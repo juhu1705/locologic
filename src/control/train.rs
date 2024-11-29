@@ -83,9 +83,7 @@ impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
         }
 
         if speed == Speed::EmergencyStop {
-            railroad
-                .send(Message::TrainSpeed(self.address, speed))
-                .await;
+            railroad.send(Message::TrainSpeed(self.address, speed));
             return;
         }
 
@@ -132,11 +130,9 @@ impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
                 }
             }
 
-            railroad
-                .send(Message::TrainSpeed(address, actual_speed))
-                .await;
+            railroad.send(Message::TrainSpeed(address, actual_speed));
         }
-        railroad.send(Message::TrainSpeed(address, speed)).await;
+        railroad.send(Message::TrainSpeed(address, speed));
         speed
     }
 
@@ -433,6 +429,7 @@ impl<Spd: SpeedType, TrainAddr: AddressType> Train<Spd, TrainAddr> {
         _tick: Duration,
         _railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
     ) {
+        todo!("Implement");
     }
 }
 

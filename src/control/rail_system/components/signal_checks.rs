@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use super::*;
 use fixedbitset::FixedBitSet;
 use petgraph::graph::DiGraph;
@@ -7,10 +5,10 @@ use petgraph::graph::DiGraph;
 /// Pushes the following track to the `stack` if the crossing is entered by the `parent_node`.
 fn handle_cross_route<CrossingAddr: AddressType>(
     cross: &Cross<CrossingAddr>,
-    parent_node: &NodeIndex,
+    parent_node: NodeIndex,
     stack: &mut VecDeque<NodeIndex>,
 ) {
-    if cross.nodes.0 == *parent_node {
+    if cross.nodes.0 == parent_node {
         stack.push_back(cross.nodes.1);
     } else {
         stack.push_back(cross.nodes.0);
@@ -29,19 +27,18 @@ async fn handle_found_node<
 >(
     stack: &mut VecDeque<NodeIndex>,
     succ: NodeIndex,
-    parent_node: &NodeIndex,
+    parent_node: NodeIndex,
     graph: &DiGraph<Node<SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>, Vec<Rail>>,
     railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
 ) {
     stack.push_back(succ);
-    if let Some(Node::Cross(adr)) = graph.node_weight(*parent_node) {
+    if let Some(Node::Cross(adr)) = graph.node_weight(parent_node) {
         if let Some(cross) = railroad.get_crossing_mutex(adr) {
-            handle_cross_route(cross.lock().await.deref(), parent_node, stack);
+            handle_cross_route(&*cross.lock().await, parent_node, stack);
         }
     }
 }
 
-///
 async fn handle_successor<
     Spd: SpeedType,
     TrainAddr: AddressType,
@@ -73,7 +70,7 @@ async fn handle_successor<
             }
         }
         _ => {
-            handle_found_node(stack, succ, &parent_node, graph, railroad).await;
+            handle_found_node(stack, succ, parent_node, graph, railroad).await;
         }
     }
 }
@@ -257,7 +254,7 @@ impl<SignalAddr: AddressType, TrainAddr: AddressType, SensorAddr: AddressType>
         railroad: &Railroad<Spd, TrainAddr, SensorAddr, SwitchAddr, SignalAddr, CrossingAddr>,
         ignore_signal: bool,
     ) -> bool {
-        for x in path.iter() {
+        for x in path {
             if let Some(status) = {
                 if let Node::Signal(sig, ..) = railroad.road().await.index(*x) {
                     return railroad
