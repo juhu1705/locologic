@@ -12,9 +12,11 @@ A model railroad controlling system to handle autodriving.
 """
 
 [features]
-all = ["locodrive"]
+all = ["locodrive_connect"]
+locodrive_connect = ["locodrive", "tokio-serial"]
 
 [dependencies]
+tokio-serial = { version = "5.4", optional = true }
 locodrive = { version = "0.1.2", features = ["all"], optional = true }
 bytes = "1.7"
 tokio = { version = "1.39", features = [

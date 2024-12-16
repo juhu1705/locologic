@@ -1,30 +1,48 @@
 use crate::control::messages::Message;
 use crate::control::rail_system::components::{Address, SwDir};
 use locodrive::args::{AddressArg, SlotArg, SpeedArg, SwitchArg, SwitchDirection};
-use locodrive::loco_controller::LocoDriveController;
+use locodrive::loco_controller::{LocoDriveController, LocoDriveMessage};
 use std::collections::HashMap;
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::{self, Receiver, Sender};
+use tokio_serial::Error;
 
 pub struct LocoDriveConnector {
     receiver: Receiver<Message<u8, u16, u16, u16, u16>>,
-    sender: LocoDriveController,
+    rail_controller: LocoDriveController,
+    rail_messages: Sender<LocoDriveMessage>,
     loco_receiver: Receiver<locodrive::protocol::Message>,
     slots: HashMap<Address, SlotArg>,
 }
 
 impl LocoDriveConnector {
-    pub fn new(
+    pub async fn new(
+        port_name: &str,
+        baud_rate: u32,
+        sending_timeout: u64,
+        flow_control: tokio_serial::FlowControl,
         receiver: Receiver<Message<u8, u16, u16, u16, u16>>,
-        sender: LocoDriveController,
         loco_receiver: Receiver<locodrive::protocol::Message>,
-    ) -> Self {
-        LocoDriveConnector {
+    ) -> Result<Self, Error> {
+        let (rail_messages, _) = broadcast::channel(25);
+
+        let rail_controller = LocoDriveController::new(
+            port_name,
+            baud_rate,
+            sending_timeout,
+            flow_control,
+            rail_messages.clone(),
+            true,
+        )
+        .await?;
+
+        Ok(LocoDriveConnector {
             receiver,
-            sender,
+            rail_controller,
+            rail_messages,
             loco_receiver,
             slots: HashMap::new(),
-        }
+        })
     }
 
     pub async fn lookup_slot(&mut self, adr: Address) -> Option<SlotArg> {
@@ -32,7 +50,7 @@ impl LocoDriveConnector {
             return Some(*self.slots.get(&adr).unwrap());
         } else {
             let _ = self
-                .sender
+                .rail_controller
                 .send_message(locodrive::protocol::Message::LocoAdr(AddressArg::new(
                     adr.address(),
                 )))
@@ -68,8 +86,16 @@ impl LocoDriveConnector {
                 _ => None,
             }
         {
-            let _ = self.sender.send_message(loco_net_message).await;
+            let _ = self.rail_controller.send_message(loco_net_message).await;
         }
+    }
+
+    pub fn get_reciever(&self) -> Receiver<LocoDriveMessage> {
+        self.rail_messages.subscribe()
+    }
+
+    pub fn get_sender(&self) -> Sender<LocoDriveMessage> {
+        self.rail_messages.clone()
     }
 }
 
@@ -87,15 +113,6 @@ async fn run_connector(mut connector: LocoDriveConnector) {
             }
         }
     }
-}
-
-pub fn run_loconet_connector(
-    receiver: Receiver<Message<u8, u16, u16, u16, u16>>,
-    loco_controller: LocoDriveController,
-    loco_receiver: Receiver<locodrive::protocol::Message>,
-) {
-    let actor = LocoDriveConnector::new(receiver, loco_controller, loco_receiver);
-    tokio::spawn(run_connector(actor));
 }
 
 impl From<SwDir> for SwitchDirection {
