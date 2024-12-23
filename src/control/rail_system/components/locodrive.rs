@@ -1,5 +1,7 @@
 use crate::control::rail_system::components::{Address, Speed};
-use locodrive::args::{AddressArg, SpeedArg};
+use locodrive::args::{AddressArg, SpeedArg, SwitchDirection};
+
+use super::SwDir;
 
 impl Address<u16> {
     pub fn address_arg(&self) -> AddressArg {
@@ -27,6 +29,15 @@ impl From<Speed<u8>> for SpeedArg {
             Speed::Stop => SpeedArg::Stop,
             Speed::EmergencyStop => SpeedArg::EmergencyStop,
             Speed::Drive(spd) => SpeedArg::Drive(spd),
+        }
+    }
+}
+
+impl From<SwDir> for SwitchDirection {
+    fn from(dir: SwDir) -> Self {
+        match dir {
+            SwDir::Straight => SwitchDirection::Straight,
+            SwDir::Curved => SwitchDirection::Curved,
         }
     }
 }

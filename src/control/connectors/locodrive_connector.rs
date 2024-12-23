@@ -1,40 +1,58 @@
 use crate::control::messages::Message;
-use crate::control::rail_system::components::{Address, SwDir};
+use crate::control::rail_system::components::Address;
 use crate::control::rail_system::railroad::Railroad;
 use async_trait::async_trait;
 use locodrive::args::{AddressArg, SlotArg, SpeedArg, SwitchArg, SwitchDirection};
-use locodrive::loco_controller::LocoDriveController;
+use locodrive::loco_controller::{LocoDriveController, LocoDriveMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::{self, Receiver, Sender};
 use tokio::sync::Mutex;
+use tokio_serial::Error;
 
 use super::RailroadConnector;
 
-type MutRailroads = Mutex<Vec<Arc<Railroad<u8, u16, u16, u16, u16, u16>>>>;
+type RailroadContainer = Arc<Mutex<Vec<Arc<Railroad<u8, u16, u16, u16, u16, u16>>>>>;
 
 pub struct LocoDriveConnector {
     receiver: Receiver<Message<u8, u16, u16, u16, u16>>,
-    sender: LocoDriveController,
-    railroad: MutRailroads,
+    rail_controller: LocoDriveController,
+    rail_messages: Sender<LocoDriveMessage>,
     loco_receiver: Receiver<locodrive::protocol::Message>,
     slots: HashMap<Address, SlotArg>,
+    railroads: RailroadContainer,
 }
 
 impl LocoDriveConnector {
     pub async fn new(
+        port_name: &str,
+        baud_rate: u32,
+        sending_timeout: u64,
+        flow_control: tokio_serial::FlowControl,
         receiver: Receiver<Message<u8, u16, u16, u16, u16>>,
-        sender: LocoDriveController,
         loco_receiver: Receiver<locodrive::protocol::Message>,
-    ) -> Self {
-        LocoDriveConnector {
+    ) -> Result<Self, Error> {
+        let (rail_messages, _) = broadcast::channel(25);
+
+        let rail_controller = LocoDriveController::new(
+            port_name,
+            baud_rate,
+            sending_timeout,
+            flow_control,
+            rail_messages.clone(),
+            true,
+        )
+        .await?;
+
+        Ok(LocoDriveConnector {
             receiver,
-            sender,
-            railroad: Mutex::new(vec![]),
+            rail_controller,
+            rail_messages,
             loco_receiver,
             slots: HashMap::new(),
-        }
+            railroads: Arc::new(Mutex::new(vec![])),
+        })
     }
 
     pub async fn lookup_slot(&mut self, adr: Address) -> Option<SlotArg> {
@@ -42,7 +60,7 @@ impl LocoDriveConnector {
             return Some(*self.slots.get(&adr).unwrap());
         } else {
             let _ = self
-                .sender
+                .rail_controller
                 .send_message(locodrive::protocol::Message::LocoAdr(AddressArg::new(
                     adr.address(),
                 )))
@@ -58,7 +76,7 @@ impl LocoDriveConnector {
                     Err(RecvError::Closed) => break,
                     Err(RecvError::Lagged(_)) => {
                         let _ = self
-                            .sender
+                            .rail_controller
                             .send_message(locodrive::protocol::Message::LocoAdr(adr.address_arg()))
                             .await;
                     }
@@ -84,8 +102,16 @@ impl LocoDriveConnector {
                 _ => None,
             }
         {
-            let _ = self.sender.send_message(loco_net_message).await;
+            let _ = self.rail_controller.send_message(loco_net_message).await;
         }
+    }
+
+    pub fn get_reciever(&self) -> Receiver<LocoDriveMessage> {
+        self.rail_messages.subscribe()
+    }
+
+    pub fn get_sender(&self) -> Sender<LocoDriveMessage> {
+        self.rail_messages.clone()
     }
 }
 
@@ -106,7 +132,7 @@ impl RailroadConnector<u8, u16, u16, u16, u16, u16> for LocoDriveConnector {
                 _ => None,
             }
         {
-            let _ = self.sender.send_message(loco_net_message).await;
+            let _ = self.rail_controller.send_message(loco_net_message).await;
         }
     }
 
@@ -115,41 +141,6 @@ impl RailroadConnector<u8, u16, u16, u16, u16, u16> for LocoDriveConnector {
     }
 
     async fn register_railroad(&mut self, railroad: Arc<Railroad<u8, u16, u16, u16, u16>>) {
-        self.railroad.lock().await.push(railroad.clone());
-    }
-}
-
-async fn run_connector(mut connector: LocoDriveConnector) {
-    loop {
-        match connector.receiver.recv().await {
-            Ok(msg) => {
-                connector.handle_message(msg).await;
-            }
-            Err(RecvError::Closed) => {
-                break;
-            }
-            Err(_) => {
-                continue;
-            }
-        }
-    }
-}
-
-pub async fn run_loconet_connector(
-    receiver: Receiver<Message<u8, u16, u16, u16, u16>>,
-    loco_controller: LocoDriveController,
-    loco_receiver: Receiver<locodrive::protocol::Message>,
-) {
-    let actor = LocoDriveConnector::new(receiver, loco_controller, loco_receiver).await;
-
-    tokio::spawn(run_connector(actor));
-}
-
-impl From<SwDir> for SwitchDirection {
-    fn from(dir: SwDir) -> Self {
-        match dir {
-            SwDir::Straight => SwitchDirection::Straight,
-            SwDir::Curved => SwitchDirection::Curved,
-        }
+        self.railroads.lock().await.push(railroad.clone());
     }
 }
